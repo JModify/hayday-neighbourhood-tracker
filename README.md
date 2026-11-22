@@ -1,6 +1,6 @@
 # Hay Day Neighbourhood Tracker
 
-**Version 1.0.1**
+**Version 1.0.2**
 
 A small, offline Windows desktop app for your Monday routine: enter each neighbour's farm level, Neighbourhood
 Nurture score, total donations and Derby score, then see how everyone (and the neighbourhood as a whole) is progressing.
@@ -24,9 +24,9 @@ Python needs the "tcl/tk and IDLE" option ticked (it is by default) when install
 
 1. Open **Neighbours**, press **Add several…** and paste your roster, one per line (`Sunny Acres, Elder`
    adds a rank too).
-2. Go to **Monday Update**. It defaults to the most recent Monday in Brisbane time (the Monday is the reporting
-   date for the week that ended the Sunday before).
-3. Tab through the grid (farm level, Nurture, donations, Derby) and press **Save update**. You can save part-way and finish later.
+2. Go to **Monday Update**. It opens the week that is currently open for entry (see "The Monday 6 PM cutoff" below).
+3. Tab through the grid (farm level, Nurture, donations, Derby) and press **Save update**. You can save part-way and finish
+   later, as long as the week is still open. A row only counts as entered when **all four** numbers are filled in.
 
 The database starts empty. Nothing is pre-loaded.
 
@@ -39,7 +39,21 @@ The database starts empty. Nothing is pre-loaded.
 | **Neighbours** | Search, add, edit (farm name, in-game rank, player tag, notes), archive / restore, permanent delete (shows how many records go), plus each neighbour's latest stats and dated history. |
 | **Rankings** | Weekly levels gained, Nurture, donations, overall score and leaderboard position change. Click any heading to sort. Select a row to see the full score breakdown. |
 
-Use the week picker (‹ › or the drop-down, ✓ = has data) to open an earlier Monday and enter or correct data.
+Use the week picker (‹ › or the drop-down, ✓ = has data) to look at earlier weeks. Closed weeks are read-only.
+
+## The Monday 6 PM cutoff
+
+Hay Day resets its stats at **6 PM Monday, Brisbane time**, so the tracker closes each week at that moment
+(this follows Brisbane time, not your PC's clock):
+
+* A reporting Monday opens for entry as soon as the previous one closes, and stays open until **6:00 PM on that Monday**.
+  So you can enter numbers on Sunday, then keep correcting them until 5:59 PM Monday, and it all counts for that week.
+* From 6:00 PM the week is **read-only**: boxes are greyed out, Save is disabled, and the database refuses changes. That
+  includes supplying the "actual amount earned" after a counter reset.
+* The Monday Update banner shows when the open week closes and how long is left. If the cutoff passes while the app is
+  open, it moves to the new week by itself and tells you. Anything typed but not saved before 6 PM is not kept.
+* Only the open week and weeks that already have data appear in the week picker, and a week more than one Monday ahead
+  cannot be entered.
 
 ## How numbers are worked out
 
@@ -63,8 +77,9 @@ Use the week picker (‹ › or the drop-down, ✓ = has data) to open an earlie
 * **Derby scores** are recorded every week, but at the default 0% weight they are not part of the score, so your existing
   rankings do not change. To score them, open **Rankings → Edit settings…**, give Derby a weight (for example 30%), lower the
   others so the total is 100%, and set a weekly target that suits your neighbourhood (100 is only a placeholder). Once Derby
-  has a weight it is required like the other metrics: a neighbour with no Derby score for the week shows *Insufficient data*,
-  and a Monday Update row only counts as entered when its Derby box is filled in.
+  has a weight it is required for the score like the other metrics: a neighbour with no Derby score for the week shows
+  *Insufficient data*. Separately from scoring, a Monday Update row **always** needs its Derby box filled in to count as
+  entered (weeks from before Derby was added therefore show as partly entered).
 * **Leaderboard position**: highest score is 1. Tied scores share a position (1, 1, 3…). The *in-game rank*
   (Leader / Elder / Member, or a number you choose) is separate and is just a label you maintain.
 * Changing settings recalculates every week, including past ones. Nothing calculated is stored; only your entries are.
@@ -138,6 +153,13 @@ If something unexpected goes wrong inside the app, a message appears and the det
 Replace the files and start the app. Your database is upgraded automatically: it gains two Derby columns and nothing
 is changed or removed. Before that happens, a copy is saved next to it as
 `%LOCALAPPDATA%\HayDayTracker\hayday_tracker.before-derby.bak`. Backups made by 1.0.0 can still be restored in 1.0.1.
+
+## What changed in 1.0.2
+
+* **Changed:** Monday Update closes each week at **6 PM Monday, Brisbane time** (when Hay Day resets). You can enter
+  data from the Sunday before and keep updating it until then; afterwards that week is read-only. See "The Monday 6 PM cutoff".
+* **Fixed:** a row was counted as complete without a Derby score. All four numbers are now required.
+* Existing data is untouched. Weeks before today are simply closed.
 
 ## What changed in 1.0.1
 

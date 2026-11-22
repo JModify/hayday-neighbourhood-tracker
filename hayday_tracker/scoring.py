@@ -98,9 +98,8 @@ class WeekResult:
 
     @property
     def entered(self) -> bool:
-        """Everything needed for this week is in: the core three, plus Derby when it counts towards the score."""
-        e = self.entry
-        return e is not None and e.core_complete and (e.derby is not None or DERBY not in self.required)
+        """All four values (farm level, Nurture, donations and Derby) are in, whatever the score weights are."""
+        return self.entry is not None and self.entry.complete
 
     @property
     def flags_text(self) -> str:

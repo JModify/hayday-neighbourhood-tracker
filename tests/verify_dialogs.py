@@ -10,7 +10,17 @@ from hayday_tracker import ui_dialogs
 from hayday_tracker.models import Settings, EntryInput
 sys.stdout.reconfigure(encoding="utf-8")
 W0, W1 = date(2026, 11, 9), date(2026, 11, 16)
-App.latest_monday = lambda self: W1
+from datetime import datetime                                          # noqa: E402
+from hayday_tracker import util                                        # noqa: E402
+NOW = [datetime(2026, 11, 9, 10, 0, tzinfo=util.BRISBANE)]
+
+
+def at(day, hour=10, minute=0):
+    """Pretend it is this moment in Brisbane (entry for a Monday closes at 6 PM that Monday)."""
+    NOW[0] = datetime(day.year, day.month, day.day, hour, minute, tzinfo=util.BRISBANE)
+
+
+util.set_clock(lambda: NOW[0])
 tmp = Path(tempfile.mkdtemp())
 msgs = []
 messagebox.showinfo = lambda t, m, **k: msgs.append((t, m))
@@ -59,7 +69,8 @@ check("actual dialog can clear (blank -> (None,))", b.result == (None,))
 
 # Monday grid: reset flagged, click-to-set path
 ids = {n.farm_name: n.id for n in app.db.list_neighbours()}
-app.db.save_week(W0, [EntryInput(ids["Sunny Acres"], 50, 800, 100)]); app.request_week(W0); app.request_week(W1); root.update()
+app.db.save_week(W0, [EntryInput(ids["Sunny Acres"], 50, 800, 100)])
+at(W1); app.check_clock(); root.update()
 row = {r.n.farm_name: r for r in app.monday.rows}["Sunny Acres"]
 for k, v in (("nur", "200"), ("don", "120"), ("lvl", "51")): row.vars[k].set(v)
 root.update()

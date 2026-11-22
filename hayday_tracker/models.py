@@ -42,9 +42,9 @@ class Entry:
     derby_actual: int | None = None
 
     @property
-    def core_complete(self) -> bool:
-        """Farm level, Nurture and donations are all entered (Derby is judged separately)."""
-        return None not in (self.farm_level, self.nurture, self.donations)
+    def complete(self) -> bool:
+        """Every value is entered: farm level, Nurture, donations and Derby."""
+        return None not in (self.farm_level, self.nurture, self.donations, self.derby)
 
 
 @dataclass(frozen=True)

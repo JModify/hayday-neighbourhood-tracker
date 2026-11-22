@@ -26,6 +26,17 @@ from hayday_tracker.models import EntryInput, Settings              # noqa: E402
 from hayday_tracker.scoring import DERBY, RESET, week_results        # noqa: E402
 
 W0, W1 = date(2026, 11, 9), date(2026, 11, 16)
+from datetime import datetime                                          # noqa: E402
+from hayday_tracker import util                                        # noqa: E402
+NOW = [datetime(2026, 11, 9, 10, 0, tzinfo=util.BRISBANE)]
+
+
+def at(day, hour=10, minute=0):
+    """Pretend it is this moment in Brisbane (entry for a Monday closes at 6 PM that Monday)."""
+    NOW[0] = datetime(day.year, day.month, day.day, hour, minute, tzinfo=util.BRISBANE)
+
+
+util.set_clock(lambda: NOW[0])
 failures: list[str] = []
 
 
@@ -84,10 +95,12 @@ def part_a(tmp: Path) -> None:
     Database(old).close()      # opening again must not fail or duplicate columns
 
     db = Database(tmp / "d" / "tracker.db")
-    ids = {n: db.add_neighbour(n, today=W0) for n in ("Alice", "Bob", "Cara", "Dan")}
+    at(W0)
+    ids = {n: db.add_neighbour(n, first_week=W0) for n in ("Alice", "Bob", "Cara", "Dan")}
     E = lambda n, lv, nu, do, de: EntryInput(ids[n], lv, nu, do, derby=de)      # noqa: E731
     db.save_week(W0, [E("Alice", 50, 1000, 200, 40), E("Bob", 40, 500, 100, 70), E("Cara", 30, 800, 50, 500),
                       E("Dan", 20, 300, 40, None)])
+    at(W1)
     db.save_week(W1, [E("Alice", 51, 1100, 220, 100), E("Bob", 40, 560, 100, 0), E("Cara", 31, 900, 80, 20),
                       E("Dan", 21, 400, 55, 60)])
     ds = db.load_dataset()
@@ -144,7 +157,7 @@ def part_b(tmp: Path) -> None:
     messagebox.showwarning = messagebox.showinfo = messagebox.showerror = lambda t, m, **k: popups.append(t)
     messagebox.askyesno = lambda *a, **k: True
     messagebox.askyesnocancel = lambda *a, **k: True
-    App.latest_monday = lambda self: W1
+    at(W1)
     app = App(tmp / "ui" / "tracker.db")
     _apps.append(app)
     root = app.root
@@ -156,7 +169,7 @@ def part_b(tmp: Path) -> None:
     pump()
     pump()                                           # window is open with an EMPTY roster, as on first run
     for i in range(30):
-        app.db.add_neighbour(f"Farm {i:02d}", "Member", today=W1)
+        app.db.add_neighbour(f"Farm {i:02d}", "Member", first_week=W1)
     app.neighbours_changed()
     pump()
     pump()
@@ -167,6 +180,9 @@ def part_b(tmp: Path) -> None:
           region[3] >= need > body.canvas.winfo_height(), f"region={region} need={need} view={body.canvas.winfo_height()}")
     check("the scroll bar thumb is smaller than its track (there is something to scroll)",
           body.canvas.yview()[1] < 0.9, str(body.canvas.yview()))
+    root.lift()
+    root.attributes("-topmost", True)       # keep the window above others so the real pointer is over it
+    pump()
     top = body.canvas.yview()[0]
     cx, cy = body.canvas.winfo_rootx() + 200, body.canvas.winfo_rooty() + 100
     root.event_generate("<MouseWheel>", delta=-120, rootx=cx, rooty=cy, warp=True)    # pointer over the list
@@ -191,7 +207,7 @@ def part_b(tmp: Path) -> None:
     pump()
     app.monday.save()
     pump()
-    app.db.add_neighbour("Late Joiner", "Member", today=W1)
+    app.db.add_neighbour("Late Joiner", "Member", first_week=W1)
     app.neighbours_changed()
     pump()
     pump()
@@ -201,17 +217,17 @@ def part_b(tmp: Path) -> None:
     print("\nDERBY in the window")
     r0 = app.monday.rows[0]
     check("the grid has a Derby box on every row", all("der" in r.entries for r in app.monday.rows))
-    check("Derby is not needed for 'entered' while its weight is 0",
-          (r0.vars.__setitem__("lvl", r0.vars["lvl"]) or True) and not app.settings.weight_derby)
+    check("Derby weight starts at 0", not app.settings.weight_derby)
     r0.vars["lvl"].set("5"); r0.vars["nur"].set("10"); r0.vars["don"].set("3"); pump()
-    check("a row is complete without Derby when Derby is unscored", r0.complete())
+    check("a row WITHOUT a Derby score is not complete, even while Derby carries no weight", not r0.complete())
+    check("its status says it is only partly entered", "Partly entered" in r0.status.cget("text"))
     s = Settings(weight_nurture=40, weight_donations=40, weight_levels=10, weight_derby=10)
     app.db.save_settings(s)
     app.settings = s
     app.monday.reload_keeping_drafts()
     pump()
     r0 = app.monday.rows[0]
-    check("once Derby has a weight, a row also needs a Derby score to be complete", not r0.complete())
+    check("with a Derby weight set, a row without Derby is still not complete", not r0.complete())
     r0.vars["der"].set("12"); pump()
     check("entering a Derby score completes the row", r0.complete())
     r0.vars["der"].set("abc"); pump()

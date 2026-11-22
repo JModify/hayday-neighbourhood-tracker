@@ -18,9 +18,10 @@ from .ui_monday import MondayTab
 from .ui_neighbours import NeighboursTab
 from .ui_overview import OverviewTab
 from .ui_rankings import RankingsTab
-from .util import fmt_date, most_recent_monday, week_choices
+from .util import current_reporting_monday, fmt_cutoff, fmt_date, is_week_locked, week_choices
 
 TITLE = "Hay Day Neighbourhood Tracker"
+CLOCK_CHECK_MS = 15_000
 
 
 class App:
@@ -55,6 +56,37 @@ class App:
         self.root.protocol("WM_DELETE_WINDOW", self.close)
         self.refresh_all()
         self.show_tab("monday")        # the weekly job is what you open the app for
+        self._open_week = self.latest_monday()
+        self.root.after(CLOCK_CHECK_MS, self._clock_tick)
+
+    # ------------------------------------------------------------- the 6 PM cutoff
+    def _clock_tick(self) -> None:
+        """Every few seconds: update the countdown, and react when a week's 6 PM cutoff passes."""
+        try:
+            self.check_clock()
+        finally:
+            self.root.after(CLOCK_CHECK_MS, self._clock_tick)
+
+    def check_clock(self) -> None:
+        current = self.latest_monday()
+        if current != self._open_week:
+            closed, self._open_week = self._open_week, current
+            viewing_closed = self.week == closed
+            lost = self.monday.week == closed and self.monday.has_unsaved()
+            if viewing_closed:
+                self.week = current            # carry on with the new week
+            self.refresh_all(reload_monday=True)
+            if viewing_closed or lost:
+                note = (f"Entry for {fmt_cutoff(closed)} Brisbane time has closed, so that week is now read-only "
+                        "(Hay Day has reset its stats).")
+                if lost:
+                    note += "\n\nNumbers you had typed but not saved before the cutoff could not be kept."
+                if viewing_closed:
+                    note += f"\n\nThe tracker has moved on to the new week ({fmt_date(current)})."
+                messagebox.showinfo("Week closed", note, parent=self.root)
+        self.monday.update_lock_banner()
+        for tab in (self.overview, self.rankings):
+            tab.picker.refresh()
 
     # --------------------------------------------------------------- window
     def _size_window(self) -> None:
@@ -88,7 +120,11 @@ class App:
 
     # ------------------------------------------------------------ week state
     def latest_monday(self) -> date:
-        return most_recent_monday()
+        """The reporting Monday that is open for entry right now (changes at 6 PM Monday, Brisbane time)."""
+        return current_reporting_monday()
+
+    def is_locked(self, week: date) -> bool:
+        return is_week_locked(week)
 
     def data_weeks(self) -> list[date]:
         return self.db.entry_dates()

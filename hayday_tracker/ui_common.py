@@ -108,7 +108,8 @@ def apply_theme(root: tk.Tk) -> ttk.Style:
 
     style.configure("TEntry", fieldbackground=C["entry"], padding=5, bordercolor=C["border"],
                     lightcolor=C["entry"], darkcolor=C["entry"])
-    style.map("TEntry", bordercolor=[("focus", C["green"])], lightcolor=[("focus", C["green"])])
+    style.map("TEntry", bordercolor=[("focus", C["green"])], lightcolor=[("focus", C["green"])],
+              fieldbackground=[("disabled", "#EFE9DA")], foreground=[("disabled", C["text"])])
     style.configure("Invalid.TEntry", fieldbackground=C["error_bg"], bordercolor=C["error"],
                     lightcolor=C["error_bg"], darkcolor=C["error_bg"], padding=5)
     style.map("Invalid.TEntry", bordercolor=[("focus", C["error"])],
@@ -259,7 +260,7 @@ class WeekPicker(ttk.Frame):
         self._weeks: list[date] = []
         ttk.Button(self, text="‹", width=3, style="Nav.TButton",
                    command=lambda: self._step(+1)).pack(side="left")
-        self.combo = ttk.Combobox(self, state="readonly", width=24, font=(FONT, 10, "bold"))
+        self.combo = ttk.Combobox(self, state="readonly", width=31, font=(FONT, 10, "bold"))
         self.combo.pack(side="left", padx=4)
         ttk.Button(self, text="›", width=3, style="Nav.TButton",
                    command=lambda: self._step(-1)).pack(side="left")
@@ -271,10 +272,11 @@ class WeekPicker(ttk.Frame):
     def refresh(self) -> None:
         self._weeks = self.app.week_options()
         data = set(self.app.data_weeks())
+        current = self.app.latest_monday()
         self._labels = []
         self._by_label = {}
         for w in self._weeks:
-            label = fmt_date(w) + ("   ✓" if w in data else "")
+            label = fmt_date(w) + ("   ✓" if w in data else "") + ("   (open)" if w == current else "")
             self._labels.append(label)
             self._by_label[label] = w
         self.combo.configure(values=self._labels)

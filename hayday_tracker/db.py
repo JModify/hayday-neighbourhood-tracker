@@ -9,7 +9,8 @@ from pathlib import Path
 from typing import Iterable
 
 from .models import Dataset, Entry, EntryInput, Neighbour, Settings
-from .util import is_monday, most_recent_monday, today_brisbane
+from .util import (current_reporting_monday, fmt_cutoff, is_monday, is_week_locked,
+                   now_brisbane, today_brisbane)
 
 APP_DIR_NAME = "HayDayTracker"
 DB_FILE_NAME = "hayday_tracker.db"
@@ -169,9 +170,10 @@ class Database:
         return r is not None
 
     def add_neighbour(self, farm_name: str, game_rank: str = "", player_tag: str = "",
-                      notes: str = "", today: date | None = None) -> int:
+                      notes: str = "", first_week: date | None = None) -> int:
+        """Add to the roster. They count from the week currently open for entry unless told otherwise."""
         name, rank, tag, note = self._validated(farm_name, game_rank, player_tag, notes)
-        first_week = most_recent_monday(today or today_brisbane())
+        first_week = first_week or current_reporting_monday()
         try:
             with self.conn:
                 cur = self.conn.execute(
@@ -232,15 +234,33 @@ class Database:
         rows = self.conn.execute("SELECT DISTINCT reporting_date FROM weekly_entries ORDER BY 1").fetchall()
         return [date.fromisoformat(r[0]) for r in rows]
 
-    def save_week(self, reporting_date: date, rows: Iterable[EntryInput]) -> tuple[int, int]:
+    @staticmethod
+    def check_week_open(reporting_date: date, now: datetime | None = None) -> None:
+        """Raise unless ``reporting_date`` is the week currently open for entry.
+
+        A week can be changed from the Sunday before until 6 PM on its Monday (Brisbane time), when Hay Day
+        resets its stats. After that it is read-only.
+        """
+        if not is_monday(reporting_date):
+            raise ValidationError("The reporting date must be a Monday.")
+        now = now or now_brisbane()
+        if is_week_locked(reporting_date, now):
+            raise ValidationError(f"Entry for {fmt_cutoff(reporting_date)} Brisbane time has closed, so that week "
+                                  "can no longer be changed.")
+        if reporting_date > current_reporting_monday(now):
+            raise ValidationError("That week has not opened for entry yet.")
+
+    def save_week(self, reporting_date: date, rows: Iterable[EntryInput],
+                  now: datetime | None = None) -> tuple[int, int]:
         """Save every row in one transaction. Returns ``(saved, cleared)``.
+
+        Refused once the week's 6 PM Monday (Brisbane) cutoff has passed.
 
         There is one entry per neighbour per reporting date, so saving again
         updates the existing record. A row with all three values blank removes
         any saved entry for that neighbour and week.
         """
-        if not is_monday(reporting_date):
-            raise ValidationError("The reporting date must be a Monday.")
+        self.check_week_open(reporting_date, now)
         saved = cleared = 0
         stamp = _now_text()
         day = reporting_date.isoformat()
@@ -268,8 +288,13 @@ class Database:
                 saved += 1
         return saved, cleared
 
-    def set_actual(self, neighbour_id: int, reporting_date: date, metric: str, value: int | None) -> None:
-        """Record (or clear) the amount actually earned after a cumulative counter dropped."""
+    def set_actual(self, neighbour_id: int, reporting_date: date, metric: str, value: int | None,
+                   now: datetime | None = None) -> None:
+        """Record (or clear) the amount actually earned after a cumulative counter dropped.
+
+        This changes that week's data, so it is locked with the week at 6 PM Monday (Brisbane).
+        """
+        self.check_week_open(reporting_date, now)
         column = {"nurture": "nurture_actual", "donations": "donations_actual",
                   "derby": "derby_actual"}[metric]
         with self.conn:

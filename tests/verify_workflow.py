@@ -27,11 +27,21 @@ from hayday_tracker.db import Database, ValidationError             # noqa: E402
 from hayday_tracker.models import EntryInput, Settings              # noqa: E402
 from hayday_tracker.scoring import (DONATIONS, LEVELS, NURTURE,      # noqa: E402
                                     NO_BASELINE, OK, OVERRIDE, RESET, week_results)
+from hayday_tracker import util                                      # noqa: E402
 from hayday_tracker.util import BRISBANE, most_recent_monday, parse_count  # noqa: E402
 
 W0, W1, W2 = date(2026, 11, 9), date(2026, 11, 16), date(2026, 11, 23)
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 failures: list[str] = []
+NOW = [datetime(2026, 11, 9, 10, 0, tzinfo=BRISBANE)]
+
+
+def at(day: date, hour: int = 10, minute: int = 0) -> None:
+    """Pretend it is this moment in Brisbane. Entry for a Monday closes at 6 PM that Monday."""
+    NOW[0] = datetime(day.year, day.month, day.day, hour, minute, tzinfo=BRISBANE)
+
+
+util.set_clock(lambda: NOW[0])
 _apps: list = []
 
 
@@ -62,12 +72,14 @@ def part_a(tmp: Path) -> None:
     check("blank is not zero", parse_count("") == (None, None) and parse_count("0") == (0, None))
     check("bad numbers rejected", parse_count("-3")[1] and parse_count("abc")[1] and parse_count("1.5")[1])
 
-    ids = {n: db.add_neighbour(n, r, today=W0) for n, r in
+    at(W0)                                    # Monday 9 Nov, 10 AM: week 1 is open
+    ids = {n: db.add_neighbour(n, r, first_week=W0) for n, r in
            [("Alice", "Leader"), ("Bob", "Elder"), ("Cara", "Member"), ("Dan", "Member"),
             ("Eve", "Member"), ("Frank", "Member")]}
     S = lambda n, lv, nu, do: EntryInput(ids[n], lv, nu, do)           # noqa: E731
     db.save_week(W0, [S("Alice", 50, 1000, 200), S("Bob", 40, 500, 100), S("Cara", 30, 800, 50),
                       S("Dan", 20, 300, 40), S("Frank", 50, 1000, 200)])          # Eve has no W0 data
+    at(W1)                                    # a week later: week 2 is open and week 1 has closed
     db.save_week(W1, [S("Alice", 51, 1100, 220), S("Bob", 40, 560, 100), S("Cara", 31, 200, 80),
                       S("Dan", 21, 400, 55), S("Eve", 10, 100, 10), S("Frank", 51, 1100, 220)])
 
@@ -146,6 +158,32 @@ def part_a(tmp: Path) -> None:
         check("non-Monday reporting date rejected", True)
     db.save_week(W1, [S("Alice", 51, 1100, 220)])
 
+    print(" Monday 6 PM Brisbane cutoff")
+    at(W1, 17, 59)
+    db.save_week(W1, [S("Alice", 51, 1100, 220)])
+    check("saving is still allowed at 5:59 PM on the Monday", True)
+    at(W1, 18, 0)
+    check("at exactly 6:00 PM the week is closed and saving is refused", _raises(lambda: db.save_week(W1, [S("Alice", 51, 1100, 221)])))
+    check("the refused save changed nothing", db.load_dataset().entries[W1][ids["Alice"]].donations == 220)
+    check("supplying a reset 'actual amount' is also refused after the cutoff",
+          _raises(lambda: db.set_actual(ids["Cara"], W1, "nurture", 60)))
+    at(W1, 23, 59)
+    check("still closed late on Monday night", _raises(lambda: db.save_week(W1, [S("Alice", 51, 1100, 222)])))
+    check("an earlier week stays closed", _raises(lambda: db.save_week(W0, [S("Alice", 50, 999, 200)])))
+    check("the following Monday is the open week from 6 PM", util.current_reporting_monday(NOW[0]) == W2)
+    at(W2, 9, 0)
+    check("and it can't be entered more than one week ahead",
+          _raises(lambda: db.save_week(date(2026, 11, 30), [S("Alice", 52, 1, 1)])))
+    at(date(2026, 11, 15), 20, 0)                       # Sunday evening before Monday 16 Nov
+    check("on Sunday the coming Monday is the open week (you can enter early)", util.current_reporting_monday() == W1)
+    db.save_week(W1, [S("Alice", 51, 1100, 220)])
+    check("data entered on Sunday is accepted for Monday's week", True)
+    at(W1, 10, 0)
+    check("Monday 9 AM-5:59 PM: still the same open week", util.current_reporting_monday() == W1)
+    check("cutoff time is in Brisbane time, whatever the PC's zone",
+          util.is_week_locked(W1, datetime(2026, 11, 16, 8, 0, tzinfo=timezone.utc)) is True
+          and util.is_week_locked(W1, datetime(2026, 11, 16, 7, 59, tzinfo=timezone.utc)) is False)
+
     print(" rename, archive, delete")
     db.update_neighbour(ids["Bob"], "Robert", "Elder", "#BOB123", "likes pigs")
     ds = db.load_dataset()
@@ -183,7 +221,7 @@ def part_a(tmp: Path) -> None:
           eve_row["Levels gained"] == "" and "no baseline" in eve_row["Data notes"])
     cara_row = next(r for r in table if r["Farm name"] == "Cara" and r["Reporting date (Monday)"] == W1.isoformat())
     check("CSV shows the supplied actual amount", cara_row["Nurture points"] == "50")
-    db.add_neighbour("=HYPERLINK(\"x\")", today=W0)
+    db.add_neighbour("=HYPERLINK(\"x\")", first_week=W0)
     export.export_history(db.load_dataset(), st, hist)
     rk = tmp / "rank.csv"
     export.export_rankings(week_results(db.load_dataset(), W1, st), W1, st, rk)
@@ -224,7 +262,7 @@ def part_b(tmp: Path) -> None:
     messagebox.showerror = lambda title, msg, **kw: popups.append((title, msg))
     messagebox.askyesno = lambda *a, **kw: True
     messagebox.askyesnocancel = lambda *a, **kw: True
-    App.latest_monday = lambda self: W1            # pretend "today" is the week of Monday 16 Nov 2026
+    at(W0)                                         # it is Monday 9 Nov 2026, 10 AM in Brisbane
 
     app = App(tmp / "b" / "tracker.db")
     _apps.append(app)
@@ -241,15 +279,15 @@ def part_b(tmp: Path) -> None:
           app.db.list_neighbours() == [] and app.db.entry_dates() == [])
 
     for name, rank in [("Alice", "Leader"), ("Bob", "Elder"), ("Cara", "Member"), ("Dan", "Member")]:
-        app.db.add_neighbour(name, rank, today=W0)
+        app.db.add_neighbour(name, rank, first_week=W0)
     app.neighbours_changed()
     pump()
 
     def rows():
         return {r.n.farm_name: r for r in app.monday.rows}
 
-    def fill(row, lvl=None, nur=None, don=None):
-        for key, val in (("lvl", lvl), ("nur", nur), ("don", don)):
+    def fill(row, lvl=None, nur=None, don=None, der=None):
+        for key, val in (("lvl", lvl), ("nur", nur), ("don", don), ("der", der)):
             if val is not None:
                 row.vars[key].set(str(val))
         pump()
@@ -276,12 +314,40 @@ def part_b(tmp: Path) -> None:
     first._move("nur", +1)
     pump()
     check("Enter / arrow keys move down a row", root.focus_get() is app.monday.rows[1].entries["nur"])
-    for name, lv, nu, do in [("Alice", 50, "1,000", 200), ("Bob", 40, 500, 100), ("Cara", 30, 800, 50), ("Dan", 20, 300, 0)]:
-        fill(r[name], lv, nu, do)
-    check("progress reads 4 of 4", app.monday.progress_label.cget("text").startswith("4 of 4 neighbours entered"))
+    fill(r["Alice"], 50, "1,000", 200)
+    check("a row without a Derby score is NOT complete", not r["Alice"].complete()
+          and "Partly entered" in r["Alice"].status.cget("text"))
+    check("progress does not count it", app.monday.progress_label.cget("text").startswith("0 of 4"))
+    for name, lv, nu, do, de in [("Alice", 50, "1,000", 200, 40), ("Bob", 40, 500, 100, 70),
+                                 ("Cara", 30, 800, 50, 500), ("Dan", 20, 300, 0, 10)]:
+        fill(r[name], lv, nu, do, de)
+    check("progress reads 4 of 4 once every row has all four numbers",
+          app.monday.progress_label.cget("text").startswith("4 of 4 neighbours entered"))
     app.monday.save()
     pump()
     check("week 1 saved", len(app.db.load_dataset().entries[W0]) == 4)
+
+    print(" a week later: week 1 closes at 6 PM and the next week opens")
+    at(W1, 10, 0)
+    popups.clear()
+    app.check_clock()
+    pump()
+    check("the app moves on to the new week by itself", app.week == W1 and app.monday.week == W1)
+    check("and tells you the old week has closed", any(p[0] == "Week closed" for p in popups))
+    app.request_week(W0)
+    pump()
+    check("a closed week is shown read-only (every box disabled)",
+          app.monday.locked and all(e.instate(["disabled"]) for row in app.monday.rows for e in row.entries.values()))
+    check("its Save and Discard buttons are disabled", str(app.monday.save_button.cget("state")) == "disabled"
+          and str(app.monday.discard_button.cget("state")) == "disabled")
+    check("the banner says it is closed", "Closed" in app.monday.lock_label.cget("text"))
+    popups.clear()
+    check("save() refuses on a closed week", app.monday.save() is False and any(p[0] == "Week closed" for p in popups))
+    app.request_week(W1)
+    pump()
+    check("the open week is editable and says when it closes",
+          not app.monday.locked and "6:00 PM" in app.monday.lock_label.cget("text")
+          and all(not e.instate(["disabled"]) for row in app.monday.rows for e in row.entries.values()))
     check("comma-formatted numbers are stored as plain integers", app.db.load_dataset().entries[W0][
         next(n.id for n in app.db.list_neighbours() if n.farm_name == "Alice")].nurture == 1000)
 
@@ -294,10 +360,10 @@ def part_b(tmp: Path) -> None:
     check("last week's numbers are shown beside the entry boxes",
           any(w.cget("text") == "1,000" for w in app.monday.body.inner.winfo_children() if w.winfo_class() == "TLabel"))
     check("progress starts at 0 of 4", app.monday.progress_label.cget("text").startswith("0 of 4"))
-    fill(r["Alice"], 51, 1100, 220)
-    fill(r["Bob"], 40, 560, 100)                    # same donation total as last week: a genuine zero earned
-    fill(r["Cara"], 31, 200, 80)                    # nurture total went DOWN: counter reset
-    fill(r["Dan"], None, 400)                       # donations still blank
+    fill(r["Alice"], 51, 1100, 220, 100)
+    fill(r["Bob"], 40, 560, 100, 0)                 # same donation total as last week: a genuine zero earned
+    fill(r["Cara"], 31, 200, 80, 20)                # nurture total went DOWN: counter reset
+    fill(r["Dan"], None, 400, None, 60)             # donations still blank
     check("a drop in a cumulative counter is flagged in the grid",
           "dropped" in r["Cara"].status.cget("text") and str(r["Cara"].entries["nur"].cget("style")) == "Warn.TEntry")
     check("progress shows 3 of 4 with one partly entered",
@@ -386,24 +452,25 @@ def part_b(tmp: Path) -> None:
     big_n, delta_n, partial_n = app.overview.card_widgets[NURTURE]
     check("Overview nurture total = 100+60+50+100 = 310", big_n.cget("text") == "310", big_n.cget("text"))
 
-    print(" correct a past entry")
-    app.request_week(W0)
-    pump()
+    print(" correct an entry while the week is still open")
     r = rows()
-    r["Alice"].vars["nur"].set("900")
+    r["Alice"].vars["nur"].set("1150")
     pump()
     check("edited row is marked unsaved", "unsaved" in app.monday.state_label.cget("text"))
     app.monday.save()
     pump()
-    check("past entry corrected in the database", app.db.load_dataset().entries[W0][ids["Alice"]].nurture == 900)
+    check("entry corrected in the database", app.db.load_dataset().entries[W1][ids["Alice"]].nurture == 1150)
     check("still only one entry per neighbour for that date",
-          app.db.conn.execute("SELECT COUNT(*) FROM weekly_entries WHERE reporting_date=?", (W0.isoformat(),)).fetchone()[0] == 4)
+          app.db.conn.execute("SELECT COUNT(*) FROM weekly_entries WHERE reporting_date=?", (W1.isoformat(),)).fetchone()[0] == 4)
     res = by_name(week_results(app.db.load_dataset(), W1, app.settings))
-    check("the correction flows through to the next week's results (Alice nurture 200)",
-          res["Alice"].metrics[NURTURE].value == 200)
+    check("the correction flows into the results (Alice nurture 150)", res["Alice"].metrics[NURTURE].value == 150)
+    app.db.save_week(W1, [EntryInput(ids["Alice"], 51, 1100, 220, derby=100)])      # put the demo data back
+    app.refresh_all(reload_monday=True)
+    pump()
+    check("the closed week cannot be changed through the database either",
+          _raises(lambda: app.db.save_week(W0, [EntryInput(ids["Alice"], 50, 900, 200, derby=40)])))
     app.request_week(W1)
     pump()
-    app.db.save_week(W1, [EntryInput(ids["Alice"], 51, 1100, 220)])   # put the demo data back
 
     print(" rename a neighbour without losing history")
     app.show_tab("neighbours")
@@ -435,9 +502,10 @@ def part_b(tmp: Path) -> None:
     app.neighbours.show_archived.set(True)
     app.neighbours.refresh_list()
     check("Dan appears when 'Show archived' is ticked", app.neighbours.tree.exists(str(ids["Dan"])))
-    app.request_week(W2)    # a brand-new week is not offered when it is later than 'today'... but can be viewed
+    at(W2, 10, 0)
+    app.check_clock()       # a week later again: Monday 23 Nov is now the open week
     pump()
-    check("archived neighbour is absent from a new weekly update", "Dan" not in rows())
+    check("archived neighbour is absent from a new weekly update", app.week == W2 and "Dan" not in rows())
     app.request_week(W1)
     pump()
     check("archived neighbour is still shown, with saved numbers, when reopening a past week",
@@ -450,7 +518,7 @@ def part_b(tmp: Path) -> None:
     check("delete confirmation can state the record count", app.db.entry_count(ids["Dan"])[0] == 2)
 
     print(" unsaved changes and closing")
-    app.request_week(W1)
+    app.request_week(W2)
     pump()
     rows()["Alice"].vars["nur"].set("1234")
     pump()
@@ -460,7 +528,18 @@ def part_b(tmp: Path) -> None:
     check("typed-but-unsaved numbers survive a roster refresh", rows()["Alice"].vars["nur"].get() == "1234")
     app.monday.discard()
     pump()
-    check("discard restores the saved value", rows()["Alice"].vars["nur"].get() == "1100")
+    check("discard restores the saved value (blank)", rows()["Alice"].vars["nur"].get() == "")
+    rows()["Alice"].vars["nur"].set("1300")
+    pump()
+    popups.clear()
+    at(W2, 18, 0)           # 6 PM: Hay Day resets, the week closes while numbers are still unsaved
+    app.check_clock()
+    pump()
+    msg = next((p[1] for p in popups if p[0] == "Week closed"), "")
+    check("numbers typed but not saved by 6 PM are not kept, and you are told",
+          "could not be kept" in msg and not app.monday.has_unsaved(), msg)
+    check("nothing was written for the closed week", W2 not in app.db.load_dataset().entries)
+    check("the tracker moves on to the next week", app.week == date(2026, 11, 30) and not app.monday.locked)
     check("no unexpected error pop-ups during the run", not [p for p in popups if p[0] == "Something went wrong"],
           str(popups[-3:]))
     app.close()

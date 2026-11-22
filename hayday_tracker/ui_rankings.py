@@ -240,13 +240,19 @@ class RankingsTab(ttk.Frame):
                 notes.append(f"{SHORT_LABELS[key]}: {r.metrics[key].note}.")
         self.bd_note.configure(text="\n".join(notes))
         if any(r.metrics[k].status in (RESET, OVERRIDE) for k in COUNTERS):
-            self.actual_button.pack(anchor="w", pady=(8, 0))
+            if self.app.is_locked(r.week):
+                self.bd_note.configure(text=self.bd_note.cget("text") +
+                                       "\nThis week has closed, so the actual amount can no longer be added or changed.")
+            else:
+                self.actual_button.pack(anchor="w", pady=(8, 0))
 
     def set_actual(self) -> None:
         """Supply the actual amount earned for a counter that dropped (reset)."""
         r = self.selected_result()
         if r is None or r.entry is None:
             return
+        if self.app.is_locked(r.week):
+            return          # the week has closed; the explanation is shown under the breakdown
         for key in COUNTERS:
             m = r.metrics[key]
             if m.status not in (RESET, OVERRIDE):

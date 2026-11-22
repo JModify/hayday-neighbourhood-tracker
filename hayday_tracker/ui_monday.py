@@ -8,12 +8,17 @@ from tkinter import messagebox, ttk
 from .models import MODE_CUMULATIVE, Entry, EntryInput, Neighbour
 from .ui_common import C, FONT, ScrollFrame, WeekPicker
 from .ui_dialogs import ActualAmountDialog
-from .util import MAX_COUNT, MAX_LEVEL, fmt_date, fmt_int, fmt_period, parse_count
+from .util import (MAX_COUNT, MAX_LEVEL, cutoff_for, fmt_cutoff, fmt_date, fmt_int, fmt_period, fmt_remaining,
+                   is_week_locked, now_brisbane, parse_count)
 
 # (key, pixel width). The header and the body use the same widths so they line up.
 COLUMNS = [("name", 140), ("rank", 72), ("lvl_last", 46), ("lvl", 62), ("nur_last", 66), ("nur", 82),
            ("don_last", 62), ("don", 78), ("der_last", 62), ("der", 78), ("status", 150)]
 HEAD_BG = "#E9E1CD"
+HINT_OPEN = ("Tab moves across the fields, Enter or ↓ moves down a row, ↑ moves up. "
+             "Leave a box empty if you don't have the number yet; empty is not the same as 0. "
+             "A row only counts as entered when all four numbers are filled in. "
+             "You can save part-way and come back to it until the week closes.")
 RANK_ORDER = {"leader": 0, "co-leader": 1, "coleader": 1, "elder": 2, "member": 3}
 
 
@@ -92,6 +97,9 @@ class Row:
         self.initial = self._snapshot()
         for var in self.vars.values():
             var.trace_add("write", lambda *_: self._changed())
+        if tab.locked:
+            for box in self.entries.values():
+                box.state(["disabled"])
         self.refresh()
 
     # ----------------------------------------------------------------- state
@@ -142,12 +150,8 @@ class Row:
                 or (lvl is not None and lvl != self.prefill_level))
 
     def complete(self) -> bool:
-        """Everything needed is in: level, Nurture, donations, and Derby when it counts towards the score."""
-        if self.has_errors():
-            return False
-        lvl, nur, don, der = self.values()
-        derby_needed = self.tab.app.settings.weight_derby > 0
-        return None not in (lvl, nur, don) and (der is not None or not derby_needed)
+        """All four values are in: farm level, Nurture, donations and Derby. None may be left blank."""
+        return not self.has_errors() and None not in self.values()
 
     def to_input(self) -> EntryInput:
         lvl, nur, don, der = self.values()
@@ -202,18 +206,24 @@ class Row:
             for key in self.COUNTER_FIELDS:
                 if key in drops:
                     got = self.actual[key]
-                    notes.append(f"⚠ {self.COUNTER_NAMES[key]} total dropped. " +
-                                 (f"Actual earned: {got:,} (click to change)" if got is not None
-                                  else "Click to enter the actual amount earned"))
+                    if self.tab.locked:
+                        notes.append(f"⚠ {self.COUNTER_NAMES[key]} total dropped"
+                                     + (f". Actual earned: {got:,}" if got is not None else ""))
+                    else:
+                        notes.append(f"⚠ {self.COUNTER_NAMES[key]} total dropped. " +
+                                     (f"Actual earned: {got:,} (click to change)" if got is not None
+                                      else "Click to enter the actual amount earned"))
             if level_low:
                 notes.append("⚠ Farm level is lower than last week")
             if notes:
                 text += "\n" + "\n".join(notes)
                 if style != "CardBad.TLabel":
                     style = "CardWarn.TLabel" if style != "CardGood.TLabel" else "CardGood.TLabel"
-        self.status.configure(text=text, style=style, cursor="hand2" if drops else "")
+        self.status.configure(text=text, style=style, cursor="hand2" if drops and not self.tab.locked else "")
 
     def fix_drops(self) -> None:
+        if self.tab.locked:
+            return
         for key in self.drops():
             if not self.ask_actual(key):
                 break
@@ -250,7 +260,38 @@ class MondayTab(ttk.Frame):
         self.week: date | None = None
         self.stale = False
         self._status_after = None
+        self._built_locked = False
         self._build()
+
+    @property
+    def locked(self) -> bool:
+        """True once this week's 6 PM Monday (Brisbane) cutoff has passed: the grid is read-only."""
+        return self.week is not None and is_week_locked(self.week)
+
+    def update_lock_banner(self) -> None:
+        """Say whether the week is open, and when it closes. Called on load and every few seconds."""
+        if self.week is None:
+            return
+        now = now_brisbane()
+        cutoff = cutoff_for(self.week)
+        if now >= cutoff:
+            self.lock_label.configure(
+                text=f"🔒 Closed at {fmt_cutoff(self.week)} (Brisbane time), when Hay Day resets. "
+                     "This week is read-only.", style="Bad.TLabel")
+            self.hint.configure(text="This week has closed, so it can no longer be changed. "
+                                     "Open the current week to enter new numbers.")
+        else:
+            left = cutoff - now
+            soon = left.total_seconds() < 2 * 3600
+            self.lock_label.configure(
+                text=f"Open for entry until {fmt_cutoff(self.week)} Brisbane time ({fmt_remaining(left)} left). "
+                     "Until then you can keep saving changes.", style="Warn.TLabel" if soon else "Good.TLabel")
+            self.hint.configure(text=HINT_OPEN)
+        state = "disabled" if self.locked else "normal"
+        self.save_button.configure(state=state)
+        self.discard_button.configure(state=state)
+        if self.locked != self._built_locked and self.rows:
+            self.reload_keeping_drafts()      # grid was built for the other state: rebuild it
 
     # ------------------------------------------------------------------ build
     def _build(self) -> None:
@@ -263,6 +304,8 @@ class MondayTab(ttk.Frame):
         self.period.pack(anchor="w", pady=(2, 0))
         self.reporting = ttk.Label(left, text="", style="Muted.TLabel")
         self.reporting.pack(anchor="w")
+        self.lock_label = ttk.Label(left, text="", style="Good.TLabel", font=(FONT, 10, "bold"))
+        self.lock_label.pack(anchor="w", pady=(2, 0))
         picker_box = ttk.Frame(top)
         picker_box.pack(side="right", anchor="n", pady=6)
         ttk.Label(picker_box, text="Reporting Monday (✓ = has data)", style="Small.TLabel").pack(anchor="e")
@@ -277,14 +320,12 @@ class MondayTab(ttk.Frame):
         self.progress.pack(side="left", padx=14)
         self.save_button = ttk.Button(bar, text="Save update", style="Primary.TButton", command=self.save)
         self.save_button.pack(side="right")
-        ttk.Button(bar, text="Discard changes", command=self.discard).pack(side="right", padx=8)
+        self.discard_button = ttk.Button(bar, text="Discard changes", command=self.discard)
+        self.discard_button.pack(side="right", padx=8)
         self.state_label = ttk.Label(bar, text="", style="Muted.TLabel")
         self.state_label.pack(side="right", padx=12)
 
-        self.hint = ttk.Label(self, text=("Tab moves across the fields, Enter or ↓ moves down a row, ↑ moves up. "
-                              "Leave a box empty if you don't have the number yet; empty is not the same as 0. "
-                              "You can save a partly finished update and come back to it."),
-                  style="Small.TLabel", wraplength=900, justify="left")
+        self.hint = ttk.Label(self, text=HINT_OPEN, style="Small.TLabel", wraplength=900, justify="left")
         self.hint.pack(anchor="w", pady=(0, 8))
         self.bind("<Configure>", lambda e: self.hint.configure(wraplength=max(300, e.width - 60)))
 
@@ -335,6 +376,7 @@ class MondayTab(ttk.Frame):
         """(Re)build the grid for ``week``. ``drafts`` re-applies unsaved typing by neighbour."""
         self.week = week
         self.stale = False
+        self._built_locked = self.locked
         ds = self.app.db.load_dataset()
         entries = ds.entries.get(week, {})
         previous = ds.entries.get(week - timedelta(days=7), {})
@@ -351,6 +393,7 @@ class MondayTab(ttk.Frame):
         self.period.configure(text=f"Reporting period: {fmt_period(week)}")
         self.reporting.configure(text=f"Reporting date {fmt_date(week)}. Covers the week that ended on the Sunday before.")
         self.picker.refresh()
+        self.update_lock_banner()
 
         if not people:
             self._empty_state()
@@ -365,7 +408,7 @@ class MondayTab(ttk.Frame):
 
     def focus_first_empty(self) -> None:
         """Put the cursor on the first Nurture box still waiting for a number."""
-        if not self.rows:
+        if not self.rows or self.locked:
             return
         target = next((r for r in self.rows if not r.vars["nur"].get().strip()), self.rows[0])
         target.entries["nur"].focus_set()
@@ -420,6 +463,10 @@ class MondayTab(ttk.Frame):
         self._status_after = self.after(6000, clear)
 
     def save(self) -> bool:
+        if self.locked:
+            messagebox.showwarning("Week closed", f"Entry for {fmt_cutoff(self.week)} Brisbane time has closed, "
+                                   "so this week can no longer be changed.", parent=self)
+            return False
         bad = [r for r in self.rows if r.has_errors()]
         if bad:
             messagebox.showwarning(
@@ -445,6 +492,8 @@ class MondayTab(ttk.Frame):
         return True
 
     def discard(self) -> None:
+        if self.locked:
+            return
         if self.has_unsaved() and not messagebox.askyesno(
                 "Discard changes", "Throw away everything you've typed since the last save?",
                 icon="warning", default="no", parent=self):

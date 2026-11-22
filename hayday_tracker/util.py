@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import re
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 
 try:  # The tz database is not guaranteed on Windows, so fall back safely.
     from zoneinfo import ZoneInfo
@@ -21,9 +21,45 @@ MAX_COUNT = 10 ** 12
 
 
 # --------------------------------------------------------------------------- dates
+CUTOFF = time(18, 0)        # Hay Day resets its stats at 6 PM Monday, Brisbane time
+
+_clock = lambda: datetime.now(BRISBANE)       # noqa: E731  (replaceable so tests can set the time)
+
+
+def set_clock(fn=None) -> None:
+    """Replace the source of 'now' (for tests). ``None`` restores the real clock."""
+    global _clock
+    _clock = fn or (lambda: datetime.now(BRISBANE))
+
+
+def now_brisbane() -> datetime:
+    """The current date and time in Brisbane, whatever time zone the PC is set to."""
+    return _clock()
+
+
 def today_brisbane() -> date:
-    """Today's date in Brisbane, regardless of the PC's own time zone."""
-    return datetime.now(BRISBANE).date()
+    return now_brisbane().date()
+
+
+def cutoff_for(reporting_monday: date) -> datetime:
+    """When entry for a reporting Monday closes: 6:00 PM that Monday, Brisbane time."""
+    return datetime.combine(reporting_monday, CUTOFF, tzinfo=BRISBANE)
+
+
+def is_week_locked(reporting_monday: date, now: datetime | None = None) -> bool:
+    """True once the 6 PM cutoff for that reporting Monday has passed."""
+    return (now or now_brisbane()) >= cutoff_for(reporting_monday)
+
+
+def current_reporting_monday(now: datetime | None = None) -> date:
+    """The reporting Monday that is open for entry right now.
+
+    It is the next Monday whose 6 PM cutoff has not yet passed. So on Sunday it is tomorrow's Monday,
+    on Monday before 6 PM it is today, and from 6 PM Monday it becomes the Monday a week later.
+    """
+    now = now or now_brisbane()
+    monday = most_recent_monday(now.date())
+    return monday + timedelta(days=7) if now >= cutoff_for(monday) else monday
 
 
 def most_recent_monday(today: date | None = None) -> date:
@@ -61,18 +97,31 @@ def fmt_period(reporting_monday: date) -> str:
     return f"{fmt_date(start)} – {fmt_date(end)}"
 
 
-def week_choices(latest: date, data_dates: list[date] | None = None, back_weeks: int = 104) -> list[date]:
-    """Mondays offered in the week pickers, newest first."""
-    data_dates = data_dates or []
-    newest = max([latest] + data_dates)
-    oldest = latest - timedelta(weeks=back_weeks)
-    if data_dates:
-        oldest = min(oldest, min(data_dates))
-    out, d = [], newest
-    while d >= oldest:
-        out.append(d)
-        d -= timedelta(days=7)
-    return out
+def fmt_cutoff(reporting_monday: date) -> str:
+    """e.g. 'Mon 17 Nov 2026, 6:00 PM'"""
+    return f"{fmt_date(reporting_monday)}, 6:00 PM"
+
+
+def fmt_remaining(delta: timedelta) -> str:
+    minutes = max(int(delta.total_seconds() // 60), 0)
+    days, rest = divmod(minutes, 1440)
+    hours, mins = divmod(rest, 60)
+    parts = []
+    if days:
+        parts.append(f"{days} day{'s' if days != 1 else ''}")
+    if hours and days < 3:
+        parts.append(f"{hours} hour{'s' if hours != 1 else ''}")
+    if mins and not days:
+        parts.append(f"{mins} minute{'s' if mins != 1 else ''}")
+    return " ".join(parts) or "less than a minute"
+
+
+def week_choices(current: date, data_dates: list[date] | None = None) -> list[date]:
+    """Mondays offered in the week pickers, newest first: the open week plus every week that has data.
+
+    Closed weeks cannot be changed, so empty ones from the past are not offered.
+    """
+    return sorted({current, *(data_dates or [])}, reverse=True)
 
 
 # --------------------------------------------------------------------------- numbers
