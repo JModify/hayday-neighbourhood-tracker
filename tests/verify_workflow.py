@@ -265,12 +265,12 @@ def part_b(tmp: Path) -> None:
     first = app.monday.rows[0]
     order = []
     w = first.entries["lvl"]
-    for _ in range(4):
+    for _ in range(5):
         order.append(w)
         w = w.tk_focusNext()
-    check("Tab order runs level -> nurture -> donations -> next row",
-          order[1] is first.entries["nur"] and order[2] is first.entries["don"]
-          and order[3] is app.monday.rows[1].entries["lvl"])
+    check("Tab order runs level -> nurture -> donations -> derby -> next row",
+          order[1] is first.entries["nur"] and order[2] is first.entries["don"] and order[3] is first.entries["der"]
+          and order[4] is app.monday.rows[1].entries["lvl"])
     first.entries["nur"].focus_force()
     pump()
     first._move("nur", +1)
@@ -342,18 +342,18 @@ def part_b(tmp: Path) -> None:
     tree = app.rankings.tree
     vals = {tree.item(i, "values")[1]: tree.item(i, "values") for i in tree.get_children()}
     # columns: pos, name, levels, nurture, donations, score, change, notes
-    check("Alice scores 100.00 in position 1", vals["Alice"][0] == "1" and vals["Alice"][5] == "100.00", str(vals["Alice"]))
-    check("a true zero (nothing earned) shows as 0 and still scores", vals["Bob"][2] == "0" and vals["Bob"][4] == "0" and vals["Bob"][5] == "27.00",
+    check("Alice scores 100.00 in position 1", vals["Alice"][0] == "1" and vals["Alice"][6] == "100.00", str(vals["Alice"]))
+    check("a true zero (nothing earned) shows as 0 and still scores", vals["Bob"][2] == "0" and vals["Bob"][4] == "0" and vals["Bob"][6] == "27.00",
           str(vals["Bob"]))
     check("reset counter is labelled and gives Insufficient data",
-          "Counter reset" in vals["Cara"][3] and vals["Cara"][5] == "Insufficient data", str(vals["Cara"]))
+          "Counter reset" in vals["Cara"][3] and vals["Cara"][6] == "Insufficient data", str(vals["Cara"]))
     app.monday.load_week(W0)    # W0 has no earlier week at all
     app.request_week(W0)
     pump()
     app.rankings.refresh()
     vals0 = {tree.item(i, "values")[1]: tree.item(i, "values") for i in tree.get_children()}
     check("missing baseline is labelled 'No baseline' and gives Insufficient data",
-          vals0["Alice"][3] == "No baseline" and vals0["Alice"][5] == "Insufficient data", str(vals0["Alice"]))
+          vals0["Alice"][3] == "No baseline" and vals0["Alice"][6] == "Insufficient data", str(vals0["Alice"]))
     app.request_week(W1)
     pump()
     app.rankings.refresh()
@@ -377,7 +377,7 @@ def part_b(tmp: Path) -> None:
     pump()
     vals = {tree.item(i, "values")[1]: tree.item(i, "values") for i in tree.get_children()}
     check("supplying the actual amount flags it with * and scores Cara",
-          vals["Cara"][3] == "50*" and vals["Cara"][5] == "77.50", str(vals["Cara"]))
+          vals["Cara"][3] == "50*" and vals["Cara"][6] == "77.50", str(vals["Cara"]))
 
     print(" Overview tab")
     app.overview.refresh()
@@ -418,7 +418,7 @@ def part_b(tmp: Path) -> None:
           and app.db.get_neighbour(ids["Bob"]).game_rank == "Leader")
     hist = app.neighbours.history.get_children()
     check("detail view still lists both weeks of history", len(hist) == 2, str(hist))
-    check("detail view shows latest stats with changes", len(app.neighbours.stats.get_children()) == 4)
+    check("detail view shows latest stats with changes", len(app.neighbours.stats.get_children()) == 5)
     app.request_week(W1)
     pump()
     check("Monday Update shows the new name with the saved numbers",

@@ -46,7 +46,7 @@ check("settings dialog rejects zero target", d2.result is None and d2.error.cget
 ui_dialogs.SettingsDialog.show = lambda self: res
 app.edit_settings(); root.update()
 check("settings persisted and reloaded", app.db.load_settings().weight_nurture == 30 and app.settings.nurture_mode == "weekly")
-check("grid header reflects weekly nurture", "earned this week" in " ".join(w.cget("text") for w in app.monday.frame_header.winfo_children() if w.winfo_class() == "Label"))
+check("grid header reflects weekly nurture setting", "Nurture (weekly)" in " ".join(w.cget("text") for w in app.monday.frame_header.winfo_children() if w.winfo_class() == "Label"))
 ui_dialogs.SettingsDialog.show = lambda self: Settings()
 app.edit_settings()
 

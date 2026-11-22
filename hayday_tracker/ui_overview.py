@@ -4,11 +4,12 @@ from __future__ import annotations
 from datetime import timedelta
 from tkinter import ttk
 
-from .scoring import DONATIONS, LEVELS, NURTURE, RESET, WeekSummary, summarise, week_results
+from .scoring import COUNTERS, DERBY, DONATIONS, LEVELS, NURTURE, RESET, WeekSummary, summarise, week_results
 from .ui_common import C, FONT, ScrollFrame, WeekPicker, make_card
 from .util import fmt_date, fmt_int, fmt_period, fmt_signed
 
-CARD_TITLES = {LEVELS: "Levels gained", NURTURE: "Nurture points earned", DONATIONS: "Donations made"}
+CARD_TITLES = {LEVELS: "Levels gained", NURTURE: "Nurture points", DONATIONS: "Donations made",
+               DERBY: "Derby points"}
 
 
 class OverviewTab(ttk.Frame):
@@ -45,10 +46,10 @@ class OverviewTab(ttk.Frame):
 
         cards = ttk.Frame(page)
         cards.pack(fill="x")
-        for i in range(4):
+        for i in range(5):
             cards.columnconfigure(i, weight=1, uniform="cards")
         self.card_widgets = {}
-        for i, key in enumerate(("coverage", LEVELS, NURTURE, DONATIONS)):
+        for i, key in enumerate(("coverage", LEVELS, NURTURE, DONATIONS, DERBY)):
             outer, inner = make_card(cards, padding=14)
             outer.grid(row=0, column=i, sticky="nsew", padx=(0 if i == 0 else 8, 0))
             title = {"coverage": "Reporting coverage"}.get(key, CARD_TITLES.get(key))
@@ -71,11 +72,12 @@ class OverviewTab(ttk.Frame):
         o1, recent = make_card(lower, padding=12)
         o1.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
         ttk.Label(recent, text="Recent weeks", style="CardHeading.TLabel").pack(anchor="w")
-        cols = ("week", "entered", "levels", "nurture", "donations", "score")
+        cols = ("week", "entered", "levels", "nurture", "donations", "derby", "score")
         self.recent = ttk.Treeview(recent, columns=cols, show="headings", height=6, selectmode="none")
         for col, text, width, anchor in (("week", "Week (Monday)", 125, "w"), ("entered", "Entered", 70, "e"),
                                          ("levels", "Levels gained", 105, "e"), ("nurture", "Nurture", 80, "e"),
-                                         ("donations", "Donations", 85, "e"), ("score", "Avg score", 80, "e")):
+                                         ("donations", "Donations", 85, "e"), ("derby", "Derby", 70, "e"),
+                                         ("score", "Avg score", 80, "e")):
             self.recent.heading(col, text=text, anchor=anchor)
             self.recent.column(col, width=width, anchor=anchor)
         self.recent.pack(fill="both", expand=True, pady=(6, 4))
@@ -97,7 +99,7 @@ class OverviewTab(ttk.Frame):
         self.attention_text.pack(anchor="w", pady=(4, 0))
 
     def _wrap_cards(self, event) -> None:
-        wrap = max(120, event.width // 4 - 44)
+        wrap = max(100, event.width // 5 - 40)
         for _big, delta, partial in self.card_widgets.values():
             delta.configure(wraplength=wrap)
             partial.configure(wraplength=wrap)
@@ -129,7 +131,7 @@ class OverviewTab(ttk.Frame):
                           + (f"{this.roster - this.complete - this.partial} not started"
                              if this.roster - this.complete - this.partial > 0 else ""))
 
-        for key in (LEVELS, NURTURE, DONATIONS):
+        for key in (LEVELS, NURTURE, DONATIONS, DERBY):
             big, delta, partial = self.card_widgets[key]
             n, total = this.counts[key], this.totals[key]
             if n == 0:
@@ -178,7 +180,7 @@ class OverviewTab(ttk.Frame):
                     return "—"
                 return fmt_int(s.totals[key]) + ("*" if s.is_partial(key) else "")
             self.recent.insert("", "end", values=(fmt_date(w), f"{s.complete} / {s.roster}", cell(LEVELS),
-                                                  cell(NURTURE), cell(DONATIONS), avg))
+                                                  cell(NURTURE), cell(DONATIONS), cell(DERBY), avg))
 
     def _fill_top(self, results) -> None:
         scored = sorted((r for r in results if r.position is not None), key=lambda r: (r.position, r.neighbour.farm_name.lower()))
@@ -199,9 +201,9 @@ class OverviewTab(ttk.Frame):
             name = r.neighbour.farm_name
             if r.entry is None:
                 items.append(f"{name}: not entered yet")
-            elif not r.entry.complete:
+            elif not r.entered:
                 items.append(f"{name}: partly entered")
-            elif any(r.metrics[k].status == RESET for k in (NURTURE, DONATIONS)):
+            elif any(r.metrics[k].status == RESET for k in COUNTERS):
                 items.append(f"{name}: a counter dropped (supply the actual amount in Rankings)")
             elif r.flags_text and "level decreased" in r.flags_text:
                 items.append(f"{name}: farm level is lower than last week")

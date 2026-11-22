@@ -13,7 +13,7 @@ from .util import is_monday, most_recent_monday, today_brisbane
 
 APP_DIR_NAME = "HayDayTracker"
 DB_FILE_NAME = "hayday_tracker.db"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2   # 2 adds the Derby columns
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS neighbours (
@@ -37,6 +37,8 @@ CREATE TABLE IF NOT EXISTS weekly_entries (
     donations         INTEGER CHECK (donations IS NULL OR donations >= 0),
     nurture_actual    INTEGER CHECK (nurture_actual IS NULL OR nurture_actual >= 0),
     donations_actual  INTEGER CHECK (donations_actual IS NULL OR donations_actual >= 0),
+    derby             INTEGER CHECK (derby IS NULL OR derby >= 0),
+    derby_actual      INTEGER CHECK (derby_actual IS NULL OR derby_actual >= 0),
     updated_at        TEXT NOT NULL,
     UNIQUE (neighbour_id, reporting_date)
 );
@@ -91,6 +93,8 @@ def _row_to_entry(r: sqlite3.Row) -> Entry:
         donations=r["donations"],
         nurture_actual=r["nurture_actual"],
         donations_actual=r["donations_actual"],
+        derby=r["derby"],
+        derby_actual=r["derby_actual"],
     )
 
 
@@ -113,8 +117,29 @@ class Database:
                 "This database was made by a newer version of the tracker "
                 f"(schema {version}); this copy understands schema {SCHEMA_VERSION}.")
         self.conn.executescript(SCHEMA)
+        self._upgrade_to_derby()
         self.conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         self.conn.commit()
+
+    def _upgrade_to_derby(self) -> None:
+        """Databases made by version 1.0.0 have no Derby columns: add them, keeping a safety copy first."""
+        columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(weekly_entries)")}
+        if "derby" in columns:
+            return
+        has_data = self.conn.execute("SELECT 1 FROM weekly_entries LIMIT 1").fetchone() is not None
+        if has_data:
+            safety = self.path.with_name(f"{self.path.stem}.before-derby.bak")
+            if not safety.exists():
+                target = sqlite3.connect(str(safety))
+                try:
+                    self.conn.backup(target)
+                finally:
+                    target.close()
+        with self.conn:
+            self.conn.execute("ALTER TABLE weekly_entries ADD COLUMN derby INTEGER "
+                              "CHECK (derby IS NULL OR derby >= 0)")
+            self.conn.execute("ALTER TABLE weekly_entries ADD COLUMN derby_actual INTEGER "
+                              "CHECK (derby_actual IS NULL OR derby_actual >= 0)")
 
     # ------------------------------------------------------------- neighbours
     def list_neighbours(self, include_archived: bool = True) -> list[Neighbour]:
@@ -221,7 +246,8 @@ class Database:
         day = reporting_date.isoformat()
         with self.conn:  # one transaction: commits on success, rolls back on any error
             for row in rows:
-                if row.farm_level is None and row.nurture is None and row.donations is None:
+                if (row.farm_level is None and row.nurture is None and row.donations is None
+                        and row.derby is None):
                     cur = self.conn.execute(
                         "DELETE FROM weekly_entries WHERE neighbour_id=? AND reporting_date=?",
                         (row.neighbour_id, day))
@@ -230,20 +256,22 @@ class Database:
                 self.conn.execute(
                     """INSERT INTO weekly_entries
                          (neighbour_id, reporting_date, farm_level, nurture, donations,
-                          nurture_actual, donations_actual, updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                          nurture_actual, donations_actual, derby, derby_actual, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                        ON CONFLICT(neighbour_id, reporting_date) DO UPDATE SET
                          farm_level=excluded.farm_level, nurture=excluded.nurture,
                          donations=excluded.donations, nurture_actual=excluded.nurture_actual,
-                         donations_actual=excluded.donations_actual, updated_at=excluded.updated_at""",
+                         donations_actual=excluded.donations_actual, derby=excluded.derby,
+                         derby_actual=excluded.derby_actual, updated_at=excluded.updated_at""",
                     (row.neighbour_id, day, row.farm_level, row.nurture, row.donations,
-                     row.nurture_actual, row.donations_actual, stamp))
+                     row.nurture_actual, row.donations_actual, row.derby, row.derby_actual, stamp))
                 saved += 1
         return saved, cleared
 
     def set_actual(self, neighbour_id: int, reporting_date: date, metric: str, value: int | None) -> None:
         """Record (or clear) the amount actually earned after a cumulative counter dropped."""
-        column = {"nurture": "nurture_actual", "donations": "donations_actual"}[metric]
+        column = {"nurture": "nurture_actual", "donations": "donations_actual",
+                  "derby": "derby_actual"}[metric]
         with self.conn:
             cur = self.conn.execute(
                 f"UPDATE weekly_entries SET {column}=?, updated_at=? "

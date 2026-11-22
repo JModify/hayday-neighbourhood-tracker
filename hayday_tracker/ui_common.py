@@ -15,6 +15,7 @@ C = {
     "card": "#FFFCF5",
     "border": "#DCD2BA",
     "tab": "#E6DEC9",
+    "tab_selected": "#BFD8B4",   # light green for the active tab
     "trough": "#EAE3D0",
     "btn": "#E8E0CB",
     "btn_active": "#DDD3B9",
@@ -88,10 +89,14 @@ def apply_theme(root: tk.Tk) -> ttk.Style:
     style.configure("Nav.TButton", padding=(8, 5))
 
     style.configure("TNotebook", background=C["bg"], borderwidth=0, tabmargins=(0, 8, 0, 0))
+    # Selecting a tab only changes its colour: same padding, same size, nothing shifts or grows.
     style.configure("TNotebook.Tab", background=C["tab"], foreground=C["muted"], padding=(24, 10),
                     font=(FONT, 11, "bold"), borderwidth=0)
-    style.map("TNotebook.Tab", background=[("selected", C["card"]), ("active", C["btn_active"])],
-              foreground=[("selected", C["green_dark"])], expand=[("selected", (0, 0, 0, 2))])
+    style.map("TNotebook.Tab",
+              background=[("selected", C["tab_selected"]), ("active", C["btn_active"])],
+              foreground=[("selected", C["green_dark"])],
+              padding=[("selected", (24, 10)), ("!selected", (24, 10))],
+              expand=[("selected", (0, 0, 0, 0)), ("!selected", (0, 0, 0, 0))])
 
     style.configure("Treeview", background=C["card"], fieldbackground=C["card"], rowheight=30,
                     borderwidth=0, font=(FONT, 10))
@@ -166,7 +171,10 @@ def enable_mousewheel(root: tk.Misc) -> None:
                 return
             target = getattr(w, "_wheel_target", None)
             if target is not None:
-                target.yview_scroll(int(-event.delta / 120) * 2, "units")
+                # Smooth touchpads send deltas smaller than 120, so never round a scroll down to nothing.
+                steps = -event.delta / 60
+                steps = int(steps) if abs(steps) >= 1 else (1 if steps > 0 else -1)
+                target.yview_scroll(steps, "units")
                 return
             w = getattr(w, "master", None)
 
@@ -186,23 +194,46 @@ class ScrollFrame(ttk.Frame):
         self.inner = ttk.Frame(self.canvas, style=inner_style)
         self._window = self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
         self.canvas._wheel_target = self.canvas
+        self._applied: tuple[int, int] = (0, 0)
         self.inner.bind("<Configure>", lambda e: self._fit())
         self.canvas.bind("<Configure>", lambda e: self._fit())
+        self._poll()
 
     def _fit(self) -> None:
         """Match the canvas width and be at least as tall as the canvas, so expanding children can grow."""
         width = self.canvas.winfo_width()
         height = max(self.canvas.winfo_height(), self.inner.winfo_reqheight())
+        if (width, height) == self._applied:
+            return
+        self._applied = (width, height)
         self.canvas.itemconfigure(self._window, width=width, height=height)
         self.canvas.configure(scrollregion=(0, 0, width, height))
+
+    def _poll(self) -> None:
+        """Re-check the content height a few times a second.
+
+        Because the inner frame is pinned to an explicit height, Tk sends no <Configure> event when
+        its content later grows (for example when rows are added). Without this check the scroll
+        region would stay at the old height and nothing could be scrolled.
+        """
+        try:
+            self._fit()
+            self.after(250, self._poll)
+        except tk.TclError:      # the widget was destroyed
+            pass
+
+    def refit(self) -> None:
+        """Recalculate straight away (call after rebuilding the content)."""
+        self.update_idletasks()
+        self._fit()
 
     def scrollbar_width(self) -> int:
         return self.scrollbar.winfo_reqwidth()
 
     def see(self, widget: tk.Misc) -> None:
         """Scroll just enough to bring ``widget`` into view."""
-        self.update_idletasks()
-        total = max(self.inner.winfo_reqheight(), 1)
+        self.refit()
+        total = max(self._applied[1], 1)
         top = self.canvas.canvasy(0)
         view = self.canvas.winfo_height()
         y, h = widget.winfo_y(), widget.winfo_height()

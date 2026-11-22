@@ -5,7 +5,7 @@ from tkinter import messagebox, ttk
 
 from .db import ValidationError
 from .models import MODE_CUMULATIVE
-from .scoring import (DONATIONS, LABELS, LEVELS, NURTURE, OVERRIDE, RESET, SHORT_LABELS, WeekResult,
+from .scoring import (COUNTERS, DERBY, DONATIONS, LABELS, LEVELS, NURTURE, OVERRIDE, RESET, SHORT_LABELS, WeekResult,
                       week_results)
 from .ui_common import C, FONT, ScrollFrame, WeekPicker, make_card
 from .ui_dialogs import ActualAmountDialog
@@ -13,14 +13,15 @@ from .util import fmt_date, fmt_int, fmt_num, fmt_period, fmt_score
 
 # column id -> (heading, width, anchor, sort-key function, first-click direction is descending?)
 COLUMNS = {
-    "pos": ("Position", 70, "center", lambda r: r.position, False),
-    "name": ("Neighbour", 160, "w", lambda r: r.neighbour.farm_name.lower(), False),
-    "levels": ("Levels gained", 105, "e", lambda r: r.metrics[LEVELS].value, True),
-    "nurture": ("Nurture points", 110, "e", lambda r: r.metrics[NURTURE].value, True),
-    "donations": ("Donations", 90, "e", lambda r: r.metrics[DONATIONS].value, True),
-    "score": ("Overall score", 105, "e", lambda r: r.score, True),
-    "change": ("Position change", 120, "center", lambda r: r.position_change, True),
-    "notes": ("Data notes", 200, "w", lambda r: r.flags_text.lower(), False),
+    "pos": ("Position", 64, "center", lambda r: r.position, False),
+    "name": ("Neighbour", 130, "w", lambda r: r.neighbour.farm_name.lower(), False),
+    "levels": ("Levels gained", 96, "e", lambda r: r.metrics[LEVELS].value, True),
+    "nurture": ("Nurture points", 104, "e", lambda r: r.metrics[NURTURE].value, True),
+    "donations": ("Donations", 84, "e", lambda r: r.metrics[DONATIONS].value, True),
+    "derby": ("Derby points", 94, "e", lambda r: r.metrics[DERBY].value, True),
+    "score": ("Overall score", 98, "e", lambda r: r.score, True),
+    "change": ("Position change", 112, "center", lambda r: r.position_change, True),
+    "notes": ("Data notes", 110, "w", lambda r: r.flags_text.lower(), False),
 }
 
 
@@ -114,9 +115,9 @@ class RankingsTab(ttk.Frame):
         grid = ttk.Frame(settings, style="Card.TFrame")
         grid.pack(fill="x", pady=(6, 4))
         self.setting_labels = {}
-        for i, key in enumerate((NURTURE, DONATIONS, LEVELS)):
+        for i, key in enumerate((NURTURE, DONATIONS, DERBY, LEVELS)):
             grid.columnconfigure(i, weight=1, uniform="settings")
-            label = ttk.Label(grid, text="", style="Card.TLabel", justify="left", wraplength=240)
+            label = ttk.Label(grid, text="", style="Card.TLabel", justify="left", wraplength=200)
             label.grid(row=0, column=i, sticky="nw", padx=(0, 12))
             self.setting_labels[key] = label
         self.formula = ttk.Label(settings, text="Score = sum of  min(result ÷ target, 100%) × weight  for the three metrics, "
@@ -141,7 +142,7 @@ class RankingsTab(ttk.Frame):
     def _show_settings(self) -> None:
         s = self.app.settings
 
-        for key, name in ((NURTURE, "Nurture"), (DONATIONS, "Donations"), (LEVELS, "Levels gained")):
+        for key, name in ((NURTURE, "Nurture"), (DONATIONS, "Donations"), (DERBY, "Derby"), (LEVELS, "Levels gained")):
             mode = getattr(s, f"{key}_mode", None)
             if mode is None:
                 how = "change since last Monday"
@@ -181,7 +182,7 @@ class RankingsTab(ttk.Frame):
                 tags.append("odd")
             self.tree.insert("", "end", iid=str(r.neighbour.id), tags=tags, values=(
                 fmt_int(r.position), r.neighbour.label, r.metrics[LEVELS].text, r.metrics[NURTURE].text,
-                r.metrics[DONATIONS].text, fmt_score(r.score), change_text(r), r.flags_text))
+                r.metrics[DONATIONS].text, r.metrics[DERBY].text, fmt_score(r.score), change_text(r), r.flags_text))
         if keep is not None and self.tree.exists(str(keep)):
             self.tree.selection_set(str(keep))
         else:
@@ -206,7 +207,7 @@ class RankingsTab(ttk.Frame):
             return
         self.breakdown_title.configure(text=f"How {r.neighbour.farm_name}'s score was calculated")
         s = self.app.settings
-        for key in (NURTURE, DONATIONS, LEVELS):
+        for key in (NURTURE, DONATIONS, DERBY, LEVELS):
             m, p = r.metrics[key], r.parts[key]
             if key == LEVELS:
                 raw = (f"Level {m.current}, last week {m.previous}" if m.previous is not None
@@ -234,11 +235,11 @@ class RankingsTab(ttk.Frame):
             notes.append(f"Leaderboard position {r.position}"
                          + (f" (tied with {tied} other{'s' if tied != 1 else ''})" if tied else "")
                          + f". Previous week: {before}.")
-        for key in (NURTURE, DONATIONS, LEVELS):
+        for key in (NURTURE, DONATIONS, DERBY, LEVELS):
             if r.metrics[key].note:
                 notes.append(f"{SHORT_LABELS[key]}: {r.metrics[key].note}.")
         self.bd_note.configure(text="\n".join(notes))
-        if any(r.metrics[k].status in (RESET, OVERRIDE) for k in (NURTURE, DONATIONS)):
+        if any(r.metrics[k].status in (RESET, OVERRIDE) for k in COUNTERS):
             self.actual_button.pack(anchor="w", pady=(8, 0))
 
     def set_actual(self) -> None:
@@ -246,7 +247,7 @@ class RankingsTab(ttk.Frame):
         r = self.selected_result()
         if r is None or r.entry is None:
             return
-        for key in (NURTURE, DONATIONS):
+        for key in COUNTERS:
             m = r.metrics[key]
             if m.status not in (RESET, OVERRIDE):
                 continue

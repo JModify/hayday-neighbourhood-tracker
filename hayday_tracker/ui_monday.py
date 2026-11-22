@@ -11,8 +11,8 @@ from .ui_dialogs import ActualAmountDialog
 from .util import MAX_COUNT, MAX_LEVEL, fmt_date, fmt_int, fmt_period, parse_count
 
 # (key, pixel width). The header and the body use the same widths so they line up.
-COLUMNS = [("name", 150), ("rank", 80), ("lvl_last", 54), ("lvl", 70), ("nur_last", 76), ("nur", 92),
-           ("don_last", 76), ("don", 92), ("status", 190)]
+COLUMNS = [("name", 140), ("rank", 72), ("lvl_last", 46), ("lvl", 62), ("nur_last", 66), ("nur", 82),
+           ("don_last", 62), ("don", 78), ("der_last", 62), ("der", 78), ("status", 150)]
 HEAD_BG = "#E9E1CD"
 RANK_ORDER = {"leader": 0, "co-leader": 1, "coleader": 1, "elder": 2, "member": 3}
 
@@ -36,7 +36,14 @@ def _snap(text: str, minimum: int, maximum: int):
 class Row:
     """One neighbour's row in the grid."""
 
-    FIELDS = ("lvl", "nur", "don")
+    FIELDS = ("lvl", "nur", "don", "der")
+    # field key -> (Entry attribute, counter key used by scoring/settings, smallest allowed, largest allowed, label)
+    SPEC = {"lvl": ("farm_level", None, 1, MAX_LEVEL, "Farm level"),
+            "nur": ("nurture", "nurture", 0, MAX_COUNT, "Nurture score"),
+            "don": ("donations", "donations", 0, MAX_COUNT, "Total donations"),
+            "der": ("derby", "derby", 0, MAX_COUNT, "Derby score")}
+    COUNTER_FIELDS = {"nurture": "nur", "donations": "don", "derby": "der"}
+    COUNTER_NAMES = {"nurture": "Nurture", "donations": "Donations", "derby": "Derby"}
 
     def __init__(self, tab: "MondayTab", index: int, n: Neighbour, entry: Entry | None, prev: Entry | None):
         self.tab, self.index, self.n, self.prev = tab, index, n, prev
@@ -52,12 +59,12 @@ class Row:
 
         self.vars = {k: tk.StringVar() for k in self.FIELDS}
         self.entries: dict[str, ttk.Entry] = {}
-        last = {"lvl": prev.farm_level if prev else None, "nur": prev.nurture if prev else None,
-                "don": prev.donations if prev else None}
-        for col, key in ((2, "lvl"), (4, "nur"), (6, "don")):
-            ttk.Label(inner, text=fmt_int(last[key]), style="CardMuted.TLabel", anchor="e"
+        for i, key in enumerate(self.FIELDS):
+            col = 2 + 2 * i
+            last = getattr(prev, self.SPEC[key][0]) if prev else None
+            ttk.Label(inner, text=fmt_int(last), style="CardMuted.TLabel", anchor="e"
                       ).grid(row=r, column=col, sticky="ew", padx=(4, 8), pady=3)
-            box = ttk.Entry(inner, textvariable=self.vars[key], width=10, justify="right")
+            box = ttk.Entry(inner, textvariable=self.vars[key], width=9, justify="right")
             box.grid(row=r, column=col + 1, sticky="ew", **pad)
             self.entries[key] = box
             box.bind("<FocusIn>", lambda e, w=box: self._focus_in(w))
@@ -65,19 +72,21 @@ class Row:
             box.bind("<Down>", lambda e, k=key: self._move(k, +1))
             box.bind("<Up>", lambda e, k=key: self._move(k, -1))
 
-        self.status = ttk.Label(inner, text="", style="Card.TLabel", wraplength=170, justify="left")
-        self.status.grid(row=r, column=8, sticky="w", padx=(8, 4), pady=3)
+        self.status = ttk.Label(inner, text="", style="Card.TLabel", wraplength=140, justify="left")
+        self.status.grid(row=r, column=2 + 2 * len(self.FIELDS), sticky="w", padx=(8, 4), pady=3)
         self.status.bind("<Button-1>", lambda e: self.fix_drops())
 
         # Starting values: a saved entry wins; otherwise prefill only the farm level from last week.
         self.prefill_level: int | None = None
         if entry is not None:
-            texts = {"lvl": entry.farm_level, "nur": entry.nurture, "don": entry.donations}
-            self.actual = {"nurture": entry.nurture_actual, "donations": entry.donations_actual}
+            texts = {k: getattr(entry, self.SPEC[k][0]) for k in self.FIELDS}
+            self.actual = {"nurture": entry.nurture_actual, "donations": entry.donations_actual,
+                           "derby": entry.derby_actual}
         else:
             self.prefill_level = prev.farm_level if prev else None
-            texts = {"lvl": self.prefill_level, "nur": None, "don": None}
-            self.actual = {"nurture": None, "donations": None}
+            texts = {k: None for k in self.FIELDS}
+            texts["lvl"] = self.prefill_level
+            self.actual = {"nurture": None, "donations": None, "derby": None}
         for key, value in texts.items():
             self.vars[key].set("" if value is None else str(value))
         self.initial = self._snapshot()
@@ -87,37 +96,34 @@ class Row:
 
     # ----------------------------------------------------------------- state
     def _parsed(self):
-        lvl = parse_count(self.vars["lvl"].get(), 1, MAX_LEVEL)
-        nur = parse_count(self.vars["nur"].get(), 0, MAX_COUNT)
-        don = parse_count(self.vars["don"].get(), 0, MAX_COUNT)
-        return lvl, nur, don
+        """``{field: (value, error)}`` for every box."""
+        return {k: parse_count(self.vars[k].get(), self.SPEC[k][2], self.SPEC[k][3]) for k in self.FIELDS}
 
     def drops(self) -> list[str]:
         """Cumulative counters whose new total is below last Monday's."""
         if self.prev is None:
             return []
-        _, (nur, _), (don, _) = self._parsed()
-        out = []
+        parsed = self._parsed()
         settings = self.tab.app.settings
-        if settings.nurture_mode == MODE_CUMULATIVE and nur is not None and self.prev.nurture is not None \
-                and nur < self.prev.nurture:
-            out.append("nurture")
-        if settings.donations_mode == MODE_CUMULATIVE and don is not None and self.prev.donations is not None \
-                and don < self.prev.donations:
-            out.append("donations")
+        out = []
+        for counter, field in self.COUNTER_FIELDS.items():
+            value, before = parsed[field][0], getattr(self.prev, counter)
+            if getattr(settings, f"{counter}_mode") == MODE_CUMULATIVE and value is not None \
+                    and before is not None and value < before:
+                out.append(counter)
         return out
 
     def _effective_actuals(self):
         drops = self.drops()
-        return tuple(self.actual[k] if k in drops else None for k in ("nurture", "donations"))
+        return tuple(self.actual[k] if k in drops else None for k in self.COUNTER_FIELDS)
 
     def _snapshot(self):
-        return (_snap(self.vars["lvl"].get(), 1, MAX_LEVEL), _snap(self.vars["nur"].get(), 0, MAX_COUNT),
-                _snap(self.vars["don"].get(), 0, MAX_COUNT)) + self._effective_actuals()
+        return tuple(_snap(self.vars[k].get(), self.SPEC[k][2], self.SPEC[k][3])
+                     for k in self.FIELDS) + self._effective_actuals()
 
     def values(self):
-        (lvl, _), (nur, _), (don, _) = self._parsed()
-        return lvl, nur, don
+        parsed = self._parsed()
+        return tuple(parsed[k][0] for k in self.FIELDS)
 
     def is_blank(self) -> bool:
         return all(v is None for v in self.values())
@@ -128,23 +134,30 @@ class Row:
         return self._snapshot() != self.initial
 
     def has_errors(self) -> bool:
-        return any(err for _, err in self._parsed())
+        return any(err for _, err in self._parsed().values())
 
     def started(self) -> bool:
-        lvl, nur, don = self.values()
-        return nur is not None or don is not None or (lvl is not None and lvl != self.prefill_level)
+        lvl, nur, don, der = self.values()
+        return (nur is not None or don is not None or der is not None
+                or (lvl is not None and lvl != self.prefill_level))
 
     def complete(self) -> bool:
-        return not self.has_errors() and None not in self.values()
+        """Everything needed is in: level, Nurture, donations, and Derby when it counts towards the score."""
+        if self.has_errors():
+            return False
+        lvl, nur, don, der = self.values()
+        derby_needed = self.tab.app.settings.weight_derby > 0
+        return None not in (lvl, nur, don) and (der is not None or not derby_needed)
 
     def to_input(self) -> EntryInput:
-        lvl, nur, don = self.values()
-        actual_n, actual_d = self._effective_actuals()
-        return EntryInput(self.n.id, lvl, nur, don, actual_n, actual_d)
+        lvl, nur, don, der = self.values()
+        actual_n, actual_d, actual_der = self._effective_actuals()
+        return EntryInput(self.n.id, lvl, nur, don, actual_n, actual_d, der, actual_der)
 
     def draft(self) -> dict:
-        return {"lvl": self.vars["lvl"].get(), "nur": self.vars["nur"].get(), "don": self.vars["don"].get(),
-                "actual": dict(self.actual)}
+        data = {k: self.vars[k].get() for k in self.FIELDS}
+        data["actual"] = dict(self.actual)
+        return data
 
     def apply_draft(self, draft: dict) -> None:
         for key in self.FIELDS:
@@ -158,19 +171,19 @@ class Row:
         self.tab.update_progress()
 
     def refresh(self) -> None:
-        parsed = dict(zip(self.FIELDS, self._parsed()))
+        parsed = self._parsed()
         drops = self.drops()
         lvl = parsed["lvl"][0]
         level_low = bool(self.prev and lvl is not None and self.prev.farm_level is not None
                          and lvl < self.prev.farm_level)
-        names = {"lvl": "Farm level", "nur": "Nurture score", "don": "Total donations"}
         errors = []
         for key, entry in self.entries.items():
             error = parsed[key][1]
-            drop = (key == "nur" and "nurture" in drops) or (key == "don" and "donations" in drops)
+            counter = self.SPEC[key][1]
+            drop = counter in drops
             if error:
                 entry.configure(style="Invalid.TEntry")
-                errors.append(f"{names[key]} {error}")
+                errors.append(f"{self.SPEC[key][4]} {error}")
             elif drop or (key == "lvl" and level_low):
                 entry.configure(style="Warn.TEntry")
             else:
@@ -185,11 +198,11 @@ class Row:
             elif self.started():
                 text, style = "Partly entered", "CardWarn.TLabel"
             else:
-                text, style = "Not entered yet", "CardMuted.TLabel"
-            for key, label in (("nurture", "Nurture"), ("donations", "Donations")):
+                text, style = "Not entered", "CardMuted.TLabel"
+            for key in self.COUNTER_FIELDS:
                 if key in drops:
                     got = self.actual[key]
-                    notes.append(f"⚠ {label} total dropped. " +
+                    notes.append(f"⚠ {self.COUNTER_NAMES[key]} total dropped. " +
                                  (f"Actual earned: {got:,} (click to change)" if got is not None
                                   else "Click to enter the actual amount earned"))
             if level_low:
@@ -206,9 +219,8 @@ class Row:
                 break
 
     def ask_actual(self, key: str) -> bool:
-        _, (nur, _), (don, _) = self._parsed()
+        current = self._parsed()[self.COUNTER_FIELDS[key]][0]
         previous = getattr(self.prev, key)
-        current = nur if key == "nurture" else don
         result = ActualAmountDialog(self.tab, self.n.farm_name, key, previous, current, self.actual[key]).show()
         if result is None:
             return False
@@ -293,8 +305,8 @@ class MondayTab(ttk.Frame):
         for child in self.frame_header.winfo_children():
             child.destroy()
         s = self.app.settings
-        nurture = "running total" if s.nurture_mode == MODE_CUMULATIVE else "earned this week"
-        donations = "running total" if s.donations_mode == MODE_CUMULATIVE else "made this week"
+        kind = {k: "total" if getattr(s, f"{k}_mode") == MODE_CUMULATIVE else "weekly"
+                for k in ("nurture", "donations", "derby")}
         head = self.frame_header
         for i, (_, width) in enumerate(COLUMNS):
             head.grid_columnconfigure(i, minsize=width, weight=1 if i == len(COLUMNS) - 1 else 0)
@@ -308,10 +320,11 @@ class MondayTab(ttk.Frame):
         label("Neighbour", 0, 0, rowspan=2)
         label("In-game rank", 0, 1, rowspan=2)
         label("Farm level", 0, 2, span=2, anchor="center")
-        label(f"Nurture score ({nurture})", 0, 4, span=2, anchor="center")
-        label(f"Donations ({donations})", 0, 6, span=2, anchor="center")
-        label("Status", 0, 8, rowspan=2)
-        for col in (2, 4, 6):
+        label(f"Nurture ({kind['nurture']})", 0, 4, span=2, anchor="center")
+        label(f"Donations ({kind['donations']})", 0, 6, span=2, anchor="center")
+        label(f"Derby ({kind['derby']})", 0, 8, span=2, anchor="center")
+        label("Status", 0, 10, rowspan=2)
+        for col in (2, 4, 6, 8):
             label("Last week", 1, col, anchor="e", bold=False, muted=True)
             label("This week", 1, col + 1, anchor="e", bold=False, muted=True)
         # Match the width of the body's scrollbar so columns line up exactly.
@@ -347,6 +360,7 @@ class MondayTab(ttk.Frame):
             if drafts and row.n.id in drafts:
                 row.apply_draft(drafts[row.n.id])
         self.update_progress()
+        self.body.refit()
         self.body.canvas.yview_moveto(0)
 
     def focus_first_empty(self) -> None:

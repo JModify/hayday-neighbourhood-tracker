@@ -20,10 +20,11 @@ from datetime import date, timedelta
 from .models import MODE_WEEKLY, Dataset, Entry, Neighbour, Settings
 from .util import fmt_date, fmt_int
 
-LEVELS, NURTURE, DONATIONS = "levels", "nurture", "donations"
-METRICS = (NURTURE, DONATIONS, LEVELS)
-LABELS = {LEVELS: "Levels gained", NURTURE: "Nurture points", DONATIONS: "Donations"}
-SHORT_LABELS = {LEVELS: "Levels", NURTURE: "Nurture", DONATIONS: "Donations"}
+LEVELS, NURTURE, DONATIONS, DERBY = "levels", "nurture", "donations", "derby"
+METRICS = (NURTURE, DONATIONS, DERBY, LEVELS)
+COUNTERS = (NURTURE, DONATIONS, DERBY)     # metrics entered as a number that can be weekly or cumulative
+LABELS = {LEVELS: "Levels gained", NURTURE: "Nurture points", DONATIONS: "Donations", DERBY: "Derby points"}
+SHORT_LABELS = {LEVELS: "Levels", NURTURE: "Nurture", DONATIONS: "Donations", DERBY: "Derby"}
 
 OK, OVERRIDE, NOT_ENTERED, NO_BASELINE, RESET = (
     "ok", "override", "not_entered", "no_baseline", "reset")
@@ -97,13 +98,17 @@ class WeekResult:
 
     @property
     def entered(self) -> bool:
-        return self.entry is not None and self.entry.complete
+        """Everything needed for this week is in: the core three, plus Derby when it counts towards the score."""
+        e = self.entry
+        return e is not None and e.core_complete and (e.derby is not None or DERBY not in self.required)
 
     @property
     def flags_text(self) -> str:
         if self.entry is None:
             return "No entry for this week"
-        bits = [f"{SHORT_LABELS[k]}: {self.metrics[k].flag}" for k in METRICS if self.metrics[k].flag]
+        # A metric that is not scored (weight 0) and was simply not entered is not worth a warning.
+        bits = [f"{SHORT_LABELS[k]}: {self.metrics[k].flag}" for k in METRICS
+                if self.metrics[k].flag and not (k not in self.required and self.metrics[k].status == NOT_ENTERED)]
         return "; ".join(bits)
 
 
@@ -198,11 +203,9 @@ def _raw_results(ds: Dataset, week: date, settings: Settings) -> list[WeekResult
     out = []
     for nid in roster_ids(ds, week):
         entry, prev = this_entries.get(nid), prev_entries.get(nid)
-        metrics = {
-            LEVELS: _levels_metric(entry, prev, week),
-            NURTURE: _counter_metric(NURTURE, settings.nurture_mode, entry, prev, week),
-            DONATIONS: _counter_metric(DONATIONS, settings.donations_mode, entry, prev, week),
-        }
+        metrics = {LEVELS: _levels_metric(entry, prev, week)}
+        for key in COUNTERS:
+            metrics[key] = _counter_metric(key, getattr(settings, f"{key}_mode"), entry, prev, week)
         parts, score, required = _score(settings, metrics)
         out.append(WeekResult(ds.neighbours[nid], week, entry, prev, metrics, parts, score, required))
     out.sort(key=lambda r: r.neighbour.farm_name.lower())
@@ -249,5 +252,5 @@ def summarise(week: date, results: list[WeekResult]) -> WeekSummary:
                 totals[k] += m.value
                 counts[k] += 1
     complete = sum(1 for r in results if r.entered)
-    partial = sum(1 for r in results if r.entry is not None and not r.entry.complete)
+    partial = sum(1 for r in results if r.entry is not None and not r.entered)
     return WeekSummary(week, len(results), complete, partial, totals, counts, results)

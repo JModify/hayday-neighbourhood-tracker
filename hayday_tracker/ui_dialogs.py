@@ -5,7 +5,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from .models import MODE_CUMULATIVE, MODE_WEEKLY, Settings
-from .scoring import DONATIONS, LEVELS, NURTURE, SHORT_LABELS
+from .scoring import COUNTERS, DERBY, DONATIONS, LEVELS, NURTURE, SHORT_LABELS
 from .ui_common import C, Dialog
 from .util import MAX_COUNT, fmt_num, parse_count
 
@@ -29,40 +29,41 @@ class SettingsDialog(Dialog):
         self.mode_vars = {}
         reverse = {v: k for k, v in MODE_LABELS.items()}
         self._reverse_modes = reverse
-        for i, key in enumerate((NURTURE, DONATIONS)):
+        for i, key in enumerate(COUNTERS):
             ttk.Label(b, text=f"{SHORT_LABELS[key]} counter").grid(row=2 + i, column=0, sticky="w", pady=4)
             var = tk.StringVar(value=MODE_LABELS[getattr(settings, f"{key}_mode")])
             ttk.Combobox(b, textvariable=var, values=list(MODE_LABELS.values()), state="readonly",
                          width=72).grid(row=2 + i, column=1, columnspan=3, sticky="w", padx=(10, 0), pady=4)
             self.mode_vars[key] = var
         ttk.Label(b, text="Farm level is always scored on the change since the previous Monday.",
-                  style="Small.TLabel").grid(row=4, column=1, columnspan=3, sticky="w", padx=(10, 0))
+                  style="Small.TLabel").grid(row=5, column=1, columnspan=3, sticky="w", padx=(10, 0))
 
-        ttk.Separator(b).grid(row=5, column=0, columnspan=4, sticky="ew", pady=12)
+        ttk.Separator(b).grid(row=6, column=0, columnspan=4, sticky="ew", pady=12)
         for col, text in enumerate(("Metric", "Weight (%)", "Weekly target")):
-            ttk.Label(b, text=text, font=("Segoe UI", 10, "bold")).grid(row=6, column=col, sticky="w",
+            ttk.Label(b, text=text, font=("Segoe UI", 10, "bold")).grid(row=7, column=col, sticky="w",
                                                                     padx=(0 if col == 0 else 10, 0))
         self.weight_vars, self.target_vars = {}, {}
-        unit = {NURTURE: "Nurture points", DONATIONS: "Donations", LEVELS: "Levels gained"}
-        for i, key in enumerate((NURTURE, DONATIONS, LEVELS)):
-            ttk.Label(b, text=unit[key]).grid(row=7 + i, column=0, sticky="w", pady=4)
+        unit = {NURTURE: "Nurture points", DONATIONS: "Donations", DERBY: "Derby points", LEVELS: "Levels gained"}
+        for i, key in enumerate((NURTURE, DONATIONS, DERBY, LEVELS)):
+            ttk.Label(b, text=unit[key]).grid(row=8 + i, column=0, sticky="w", pady=4)
             wv = tk.StringVar(value=fmt_num(getattr(settings, f"weight_{key}")))
             tv = tk.StringVar(value=fmt_num(getattr(settings, f"target_{key}")))
-            ttk.Entry(b, textvariable=wv, width=10, justify="right").grid(row=7 + i, column=1, sticky="w", padx=(10, 0))
-            ttk.Entry(b, textvariable=tv, width=10, justify="right").grid(row=7 + i, column=2, sticky="w", padx=(10, 0))
+            ttk.Entry(b, textvariable=wv, width=10, justify="right").grid(row=8 + i, column=1, sticky="w", padx=(10, 0))
+            ttk.Entry(b, textvariable=tv, width=10, justify="right").grid(row=8 + i, column=2, sticky="w", padx=(10, 0))
             wv.trace_add("write", lambda *_: self._update_total())
             self.weight_vars[key], self.target_vars[key] = wv, tv
         self.total_label = ttk.Label(b, text="")
-        self.total_label.grid(row=10, column=0, columnspan=4, sticky="w", pady=(8, 0))
+        self.total_label.grid(row=12, column=0, columnspan=4, sticky="w", pady=(8, 0))
         ttk.Label(b, text="Each metric: result ÷ target, capped at 100% of the target, × weight. "
-                          "The three results add up to a score out of 100.",
+                          "The results add up to a score out of 100. A metric with a weight of 0 is recorded but not scored "
+                          "(Derby starts at 0).",
                   style="Small.TLabel", wraplength=560, justify="left"
-                  ).grid(row=11, column=0, columnspan=4, sticky="w", pady=(4, 0))
+                  ).grid(row=13, column=0, columnspan=4, sticky="w", pady=(4, 0))
         self.error = ttk.Label(b, text="", style="Bad.TLabel", wraplength=560, justify="left")
-        self.error.grid(row=12, column=0, columnspan=4, sticky="w", pady=(8, 0))
+        self.error.grid(row=14, column=0, columnspan=4, sticky="w", pady=(8, 0))
 
         buttons = ttk.Frame(b)
-        buttons.grid(row=13, column=0, columnspan=4, sticky="e", pady=(14, 0))
+        buttons.grid(row=15, column=0, columnspan=4, sticky="e", pady=(14, 0))
         ttk.Button(buttons, text="Restore defaults", command=self._defaults).pack(side="left", padx=(0, 20))
         ttk.Button(buttons, text="Cancel", command=self.cancel).pack(side="left", padx=4)
         ttk.Button(buttons, text="Save settings", style="Primary.TButton", command=self._save).pack(side="left")
@@ -70,9 +71,9 @@ class SettingsDialog(Dialog):
 
     def _defaults(self) -> None:
         d = Settings()
-        for key in (NURTURE, DONATIONS):
+        for key in COUNTERS:
             self.mode_vars[key].set(MODE_LABELS[getattr(d, f"{key}_mode")])
-        for key in (NURTURE, DONATIONS, LEVELS):
+        for key in (NURTURE, DONATIONS, DERBY, LEVELS):
             self.weight_vars[key].set(fmt_num(getattr(d, f"weight_{key}")))
             self.target_vars[key].set(fmt_num(getattr(d, f"target_{key}")))
 
@@ -94,9 +95,9 @@ class SettingsDialog(Dialog):
 
     def _save(self) -> None:
         s = Settings()
-        for key in (NURTURE, DONATIONS):
+        for key in COUNTERS:
             setattr(s, f"{key}_mode", self._reverse_modes[self.mode_vars[key].get()])
-        for key in (NURTURE, DONATIONS, LEVELS):
+        for key in (NURTURE, DONATIONS, DERBY, LEVELS):
             w, t = self._number(self.weight_vars[key].get()), self._number(self.target_vars[key].get())
             if w is None or t is None:
                 self.error.configure(text="Weights and targets must be numbers.")

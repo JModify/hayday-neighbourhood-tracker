@@ -7,7 +7,7 @@ from tkinter import messagebox, ttk
 
 from .db import ValidationError
 from .models import MODE_CUMULATIVE, Neighbour
-from .scoring import DONATIONS, LEVELS, NURTURE, neighbour_history
+from .scoring import COUNTERS, DERBY, LEVELS, SHORT_LABELS, neighbour_history
 from .ui_common import C, FONT, ScrollFrame, make_card
 from .ui_dialogs import BulkAddDialog
 from .ui_monday import rank_sort_key
@@ -132,7 +132,7 @@ class NeighboursTab(ttk.Frame):
         self.stats_note = ttk.Label(self.detail, text="", style="CardMuted.TLabel")
         self.stats_note.grid(row=1, column=0, sticky="w")
         cols = ("measure", "latest", "previous", "change", "counts")
-        self.stats = ttk.Treeview(self.detail, columns=cols, show="headings", height=4, selectmode="none")
+        self.stats = ttk.Treeview(self.detail, columns=cols, show="headings", height=5, selectmode="none")
         for col, text, width, anchor in (("measure", "Measure", 120, "w"), ("latest", "Latest", 70, "e"),
                                          ("previous", "Previous", 80, "e"), ("change", "Change", 70, "e"),
                                          ("counts", "Counts as this week", 170, "w")):
@@ -145,19 +145,23 @@ class NeighboursTab(ttk.Frame):
         self.history_title.grid(row=3, column=0, sticky="nw")
         hist_box = ttk.Frame(self.detail, style="Card.TFrame")
         hist_box.grid(row=4, column=0, sticky="nsew", pady=(4, 0))
-        hcols = ("week", "level", "nurture", "donations", "gain", "npts", "dpts", "score", "pos")
+        hist_box.columnconfigure(0, weight=1)
+        hist_box.rowconfigure(0, weight=1)
+        hcols = ("week", "level", "nurture", "donations", "derby", "gain", "npts", "dpts", "derby_pts", "score", "pos")
         self.history = ttk.Treeview(hist_box, columns=hcols, show="headings", height=6, selectmode="browse")
         for col, text, width, anchor in (
                 ("week", "Week (Monday)", 120, "w"), ("level", "Level", 48, "e"), ("nurture", "Nurture", 70, "e"),
-                ("donations", "Donations", 78, "e"), ("gain", "Levels +", 76, "e"),
-                ("npts", "Nurture +", 92, "e"), ("dpts", "Donations +", 104, "e"),
+                ("donations", "Donations", 78, "e"), ("derby", "Derby", 58, "e"), ("gain", "Levels +", 70, "e"),
+                ("npts", "Nurture +", 82, "e"), ("dpts", "Donations +", 94, "e"), ("derby_pts", "Derby +", 70, "e"),
                 ("score", "Score", 56, "e"), ("pos", "Pos.", 44, "e")):
             self.history.heading(col, text=text, anchor=anchor)
-            self.history.column(col, width=width, anchor=anchor, stretch=col == "week")
-        hscroll = ttk.Scrollbar(hist_box, command=self.history.yview)
-        self.history.configure(yscrollcommand=hscroll.set)
-        self.history.pack(side="left", fill="both", expand=True)
-        hscroll.pack(side="right", fill="y")
+            self.history.column(col, width=width, anchor=anchor, stretch=False)
+        vscroll = ttk.Scrollbar(hist_box, command=self.history.yview)
+        hscroll = ttk.Scrollbar(hist_box, orient="horizontal", command=self.history.xview)
+        self.history.configure(yscrollcommand=vscroll.set, xscrollcommand=hscroll.set)
+        self.history.grid(row=0, column=0, sticky="nsew")
+        vscroll.grid(row=0, column=1, sticky="ns")
+        hscroll.grid(row=1, column=0, sticky="ew")
         self.history.bind("<Double-1>", self._open_week)
         self.history.tag_configure("warn", foreground=C["warn"])
 
@@ -270,15 +274,16 @@ class NeighboursTab(ttk.Frame):
             return fmt_signed(a - b) if a is not None and b is not None else "—"
 
         m = latest.metrics
-        cumulative = {NURTURE: settings.nurture_mode == MODE_CUMULATIVE,
-                      DONATIONS: settings.donations_mode == MODE_CUMULATIVE}
+        cumulative = {k: getattr(settings, f"{k}_mode") == MODE_CUMULATIVE for k in COUNTERS}
+        nouns = {"nurture": "points earned", "donations": "made", "derby": "points earned"}
         rows = [("Farm level", fmt_int(cur.farm_level), fmt_int(prev.farm_level if prev else None),
                  change(cur.farm_level, prev.farm_level if prev else None),
                  f"{m[LEVELS].text} levels gained" if m[LEVELS].usable else m[LEVELS].text)]
-        for key, label in ((NURTURE, "Nurture"), (DONATIONS, "Donations")):
+        for key in COUNTERS:
+            label = SHORT_LABELS[key]
             now, before = getattr(cur, key), getattr(prev, key) if prev else None
             tag = " (total)" if cumulative[key] else " (weekly)"
-            noun = "points earned" if key == NURTURE else "made"
+            noun = nouns[key]
             rows.append((label + tag, fmt_int(now), fmt_int(before) if cumulative[key] else "—",
                          change(now, before) if cumulative[key] else "—",
                          f"{m[key].text} {noun}" if m[key].usable else m[key].text))
@@ -294,7 +299,8 @@ class NeighboursTab(ttk.Frame):
             self.history.insert("", "end", iid=h.week.isoformat(),
                                 tags=("warn",) if h.flags_text else (),
                                 values=(fmt_date(h.week), fmt_int(e.farm_level), fmt_int(e.nurture), fmt_int(e.donations),
-                                        h.metrics[LEVELS].text, h.metrics[NURTURE].text, h.metrics[DONATIONS].text,
+                                        fmt_int(e.derby), h.metrics[LEVELS].text, h.metrics["nurture"].text,
+                                        h.metrics["donations"].text, h.metrics[DERBY].text,
                                         "—" if h.score is None else f"{h.score:.2f}",
                                         fmt_int(h.position)))
 

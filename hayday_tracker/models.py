@@ -38,9 +38,12 @@ class Entry:
     donations: int | None
     nurture_actual: int | None = None      # amount really earned after a counter reset
     donations_actual: int | None = None
+    derby: int | None = None
+    derby_actual: int | None = None
 
     @property
-    def complete(self) -> bool:
+    def core_complete(self) -> bool:
+        """Farm level, Nurture and donations are all entered (Derby is judged separately)."""
         return None not in (self.farm_level, self.nurture, self.donations)
 
 
@@ -52,6 +55,8 @@ class EntryInput:
     donations: int | None
     nurture_actual: int | None = None
     donations_actual: int | None = None
+    derby: int | None = None
+    derby_actual: int | None = None
 
 
 @dataclass
@@ -67,19 +72,22 @@ class Dataset:
 class Settings:
     nurture_mode: str = MODE_CUMULATIVE
     donations_mode: str = MODE_CUMULATIVE
+    derby_mode: str = MODE_WEEKLY          # a Derby score is normally earned fresh each week
     weight_nurture: float = 45.0
     weight_donations: float = 45.0
     weight_levels: float = 10.0
+    weight_derby: float = 0.0              # 0 = recorded but not scored; raise it to include Derby
     target_nurture: float = 100.0
     target_donations: float = 20.0
     target_levels: float = 1.0
+    target_derby: float = 100.0
 
     def problems(self) -> list[str]:
         out: list[str] = []
-        if self.nurture_mode not in MODES or self.donations_mode not in MODES:
+        if not all(m in MODES for m in (self.nurture_mode, self.donations_mode, self.derby_mode)):
             out.append("Each counter must be weekly or cumulative.")
-        weights = (self.weight_nurture, self.weight_donations, self.weight_levels)
-        targets = (self.target_nurture, self.target_donations, self.target_levels)
+        weights = (self.weight_nurture, self.weight_donations, self.weight_derby, self.weight_levels)
+        targets = (self.target_nurture, self.target_donations, self.target_derby, self.target_levels)
         if not all(math.isfinite(w) and w >= 0 for w in weights):
             out.append("Weights must be numbers of zero or more.")
         elif abs(sum(weights) - 100) > 1e-6:

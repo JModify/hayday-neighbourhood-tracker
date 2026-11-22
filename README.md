@@ -1,7 +1,9 @@
 # Hay Day Neighbourhood Tracker
 
+**Version 1.0.1**
+
 A small, offline Windows desktop app for your Monday routine: enter each neighbour's farm level, Neighbourhood
-Nurture score and total donations, then see how everyone (and the neighbourhood as a whole) is progressing.
+Nurture score, total donations and Derby score, then see how everyone (and the neighbourhood as a whole) is progressing.
 
 Python 3.9 or newer (built and tested on 3.12), standard library only (Tkinter + SQLite). No installs, no internet.
 
@@ -24,7 +26,7 @@ Python needs the "tcl/tk and IDLE" option ticked (it is by default) when install
    adds a rank too).
 2. Go to **Monday Update**. It defaults to the most recent Monday in Brisbane time (the Monday is the reporting
    date for the week that ended the Sunday before).
-3. Tab through the grid and press **Save update**. You can save part-way and finish later.
+3. Tab through the grid (farm level, Nurture, donations, Derby) and press **Save update**. You can save part-way and finish later.
 
 The database starts empty. Nothing is pre-loaded.
 
@@ -32,7 +34,7 @@ The database starts empty. Nothing is pre-loaded.
 
 | Tab | What it is for |
 | --- | --- |
-| **Overview** | Selected week's coverage, levels gained, Nurture points and donations, with change from the previous week. Totals marked *Partial* only cover part of the roster. |
+| **Overview** | Selected week's coverage, levels gained, Nurture points, donations and Derby points, with change from the previous week. Totals marked *Partial* only cover part of the roster. |
 | **Monday Update** | One row per neighbour: last week's numbers beside this week's boxes. Tab / Enter / arrow keys to move. Progress ("18 of 24 neighbours entered"), red highlights for bad values, amber for a counter that dropped. |
 | **Neighbours** | Search, add, edit (farm name, in-game rank, player tag, notes), archive / restore, permanent delete (shows how many records go), plus each neighbour's latest stats and dated history. |
 | **Rankings** | Weekly levels gained, Nurture, donations, overall score and leaderboard position change. Click any heading to sort. Select a row to see the full score breakdown. |
@@ -43,20 +45,26 @@ Use the week picker (‹ › or the drop-down, ✓ = has data) to open an earlie
 
 * **Blank is not zero.** An empty box means "not entered yet"; type `0` for a true zero.
 * **Farm level**: this Monday's level minus the previous Monday's.
-* **Nurture and donations** are each set to either:
+* **Nurture, donations and Derby** are each set to either:
   * *Weekly*: the number you enter is what was earned that week, used directly; or
-  * *Cumulative* (the default for both): the number is a running total, so the week's figure is the difference from the
+  * *Cumulative*: the number is a running total, so the week's figure is the difference from the
     previous Monday's entry.
-  Change this under **Rankings → Edit settings…** if Nurture works differently for you.
+  Nurture and donations default to *cumulative*; Derby defaults to *weekly* (a Derby score is normally earned fresh each
+  week). Change any of them under **Rankings → Edit settings…**.
 * **Missing baseline**: a difference needs an entry for exactly the previous Monday. Without one the cell reads
   *No baseline*, never a guess.
 * **Counter reset**: if a cumulative total goes *down*, it is flagged. Click the amber status in Monday Update (or
   double-click the row in Rankings) to enter the amount actually earned that week. The figure then shows with a `*`.
   Until you do, that metric is missing.
 * **Overall score** (out of 100) = for each metric, `min(weekly result ÷ target, 100%) × weight`, added up.
-  Defaults: weights 45% Nurture, 45% donations, 10% levels; weekly targets 100 Nurture, 20 donations, 1 level.
-  Weights must add up to 100%. Scores are rounded to 2 decimal places before ranking, so what you see is what is ranked.
+  Defaults: weights 45% Nurture, 45% donations, 10% levels, **0% Derby**; weekly targets 100 Nurture, 20 donations,
+  1 level, 100 Derby. Weights must add up to 100%. Scores are rounded to 2 decimal places before ranking, so what you see is what is ranked.
   Any metric with a weight above zero is required: if one is missing the score reads *Insufficient data*.
+* **Derby scores** are recorded every week, but at the default 0% weight they are not part of the score, so your existing
+  rankings do not change. To score them, open **Rankings → Edit settings…**, give Derby a weight (for example 30%), lower the
+  others so the total is 100%, and set a weekly target that suits your neighbourhood (100 is only a placeholder). Once Derby
+  has a weight it is required like the other metrics: a neighbour with no Derby score for the week shows *Insufficient data*,
+  and a Monday Update row only counts as entered when its Derby box is filled in.
 * **Leaderboard position**: highest score is 1. Tied scores share a position (1, 1, 3…). The *in-game rank*
   (Leader / Elder / Member, or a number you choose) is separate and is just a label you maintain.
 * Changing settings recalculates every week, including past ones. Nothing calculated is stored; only your entries are.
@@ -104,6 +112,7 @@ Copy-Item "C:\path\to\HayDayTracker-backup-20261123-0900.sqlite" "$dir\hayday_tr
 ```powershell
 py -3 tests\verify_workflow.py
 py -3 tests\verify_dialogs.py
+py -3 tests\verify_v101.py
 ```
 
 This runs the whole workflow against a temporary database (never your real data): partial saves, reopening a week,
@@ -118,7 +127,23 @@ HayDayTracker (show errors).bat   same, with a visible console for troubleshooti
 hayday_tracker/              the app (db.py storage, scoring.py rules, ui_*.py screens)
 tests/verify_workflow.py     end-to-end check (rules, grid, rankings)
 tests/verify_dialogs.py      dialogs, export, backup button, counter-reset flow
+tests/verify_v101.py         scrolling, tab style, Derby, and the 1.0.0 -> 1.0.1 database upgrade
 ```
 
 If something unexpected goes wrong inside the app, a message appears and the details are appended to
 `%LOCALAPPDATA%\HayDayTracker\error.log`.
+
+## Upgrading from 1.0.0
+
+Replace the files and start the app. Your database is upgraded automatically: it gains two Derby columns and nothing
+is changed or removed. Before that happens, a copy is saved next to it as
+`%LOCALAPPDATA%\HayDayTracker\hayday_tracker.before-derby.bak`. Backups made by 1.0.0 can still be restored in 1.0.1.
+
+## What changed in 1.0.1
+
+* **Fixed:** the Monday Update list could not be scrolled (mouse wheel or scroll bar) when neighbours were added after the
+  window had opened. It also now scrolls with touchpad wheels.
+* **Changed:** the selected tab (Overview / Monday Update / Neighbours / Rankings) now only turns light green. Its size no
+  longer changes.
+* **Added:** Derby scores: a Derby column in Monday Update, Rankings, the Overview and each neighbour's history, Derby
+  settings, and both CSV exports.
